@@ -90,29 +90,6 @@ def _collect_variants(config_filename: str = "config.json") -> list[dict[str, st
     return variants
 
 
-def _parse_board_config_map() -> dict[str, str]:
-    """Build the mapping of CONFIG_BOARD_TYPE_xxx and board_type from main/CMakeLists.txt"""
-    cmake_file = Path("main/CMakeLists.txt")
-    mapping: dict[str, str] = {}
-    lines = cmake_file.read_text(encoding="utf-8").splitlines()
-    for idx, line in enumerate(lines):
-        if "if(CONFIG_BOARD_TYPE_" in line:
-            config_name = line.strip().split("if(")[1].split(")")[0]
-            if idx + 1 < len(lines):
-                next_line = lines[idx + 1].strip()
-                if next_line.startswith("set(BOARD_TYPE"):
-                    board_type = next_line.split('"')[1]
-                    mapping[config_name] = board_type
-    return mapping
-
-
-def _find_board_config(board_type: str) -> Optional[str]:
-    """Find the corresponding CONFIG_BOARD_TYPE_xxx for the given board_type"""
-    for config, b_type in _parse_board_config_map().items():
-        if b_type == board_type:
-            return config
-    return None
-
 ################################################################################
 # Check board_type in CMakeLists
 ################################################################################
@@ -163,31 +140,10 @@ def release(board_type: str, config_filename: str = "config.json", *, filter_nam
             print(f"跳过 {name} 因为 {output_path} 已存在")
             continue
 
-        # Process sdkconfig_append
-        board_type_config = _find_board_config(board_type)
-        sdkconfig_append = [f"{board_type_config}=y"]
-        sdkconfig_append.extend(build.get("sdkconfig_append", []))
-
         print("-" * 80)
         print(f"name: {name}")
         print(f"target: {target}")
-        for item in sdkconfig_append:
-            print(f"sdkconfig_append: {item}")
 
-        os.environ.pop("IDF_TARGET", None)
-
-        # Call set-target
-        if os.system(f"idf.py set-target {target}") != 0:
-            print("set-target failed", file=sys.stderr)
-            sys.exit(1)
-
-        # Append sdkconfig
-        with Path("sdkconfig").open("a") as f:
-            f.write("\n")
-            f.write("# Append by release.py\n")
-            for append in sdkconfig_append:
-                f.write(f"{append}\n")
-        # Build with macro BOARD_NAME defined to name
         if os.system(f"idf.py -DBOARD_NAME={name} -DBOARD_TYPE={board_type} build") != 0:
             print("build failed")
             sys.exit(1)
