@@ -2,7 +2,7 @@
     "target": "esp32p4",
     "builds": [
         {
-            "name": "MetalioClaw4",
+            "name": "metalio-claw-4",
             "sdkconfig_append": [
                 "CONFIG_USE_WECHAT_MESSAGE_STYLE=n",
                 "CONFIG_USE_DEVICE_AEC=y",

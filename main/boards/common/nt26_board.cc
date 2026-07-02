@@ -184,12 +184,10 @@ void Nt26Board::SetPowerSaveMode(bool enabled) {
 //     current_power_level_ = level;
 // }
 
-#define VNAME "MetalioClaw4"
-
 std::string Nt26Board::GetBoardJson() {
     // Set the board type for OTA
     std::string board_json = std::string("{\"type\":\"" BOARD_TYPE "\",");
-    board_json += "\"name\":\"" VNAME "\",";
+    board_json += "\"name\":\"" BOARD_NAME "\",";
     if (modem_) {
         board_json += "\"revision\":\"" + modem_->GetModuleRevision() + "\",";
         board_json += "\"carrier\":\"" + modem_->GetCarrierName() + "\",";

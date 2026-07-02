@@ -28,8 +28,8 @@ cd esp-idf
 ### Build and Flash
 
 ```bash
-git clone https://github.com/CloudZao/Metalio Claw4.git
-cd Metalio Claw4
+git clone https://github.com/CloudZao/MetalioClaw4.git
+cd MetalioClaw4
 
 # Build right after cloning — no idf.py set-target esp32p4 required
 idf.py build
@@ -91,6 +91,7 @@ See [docs/bluetooth-mode.md](docs/bluetooth-mode.md) for details.
 
 | Document | Description |
 |:---|:---|
+| [docs/product-wiki.md](docs/product-wiki.md) | **Product Wiki** — full-stack hardware, software & development guide |
 | [docs/bluetooth-mode.md](docs/bluetooth-mode.md) | Bluetooth modes and when they switch |
 | [docs/openclaw-api.md](docs/openclaw-api.md) | OpenClaw HTTP API (backend integration) |
 | [docs/websocket.md](docs/websocket.md) | WebSocket protocol |

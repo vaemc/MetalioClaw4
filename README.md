@@ -28,8 +28,8 @@ cd esp-idf
 ### 编译与烧录
 
 ```bash
-git clone https://github.com/CloudZao/Metalio Claw4.git
-cd Metalio Claw4
+git clone https://github.com/CloudZao/MetalioClaw4.git
+cd MetalioClaw4
 
 # 拉取代码后直接编译，无需 idf.py set-target esp32p4
 idf.py build
@@ -91,6 +91,7 @@ idf.py -p /dev/ttyUSB0 flash monitor
 
 | 文档 | 说明 |
 |:---|:---|
+| [docs/product-wiki.md](docs/product-wiki.md) | **产品 Wiki** — 软硬件全栈说明（硬件、外设、原理图、开发环境） |
 | [docs/bluetooth-mode.md](docs/bluetooth-mode.md) | 蓝牙三种模式与切换时机 |
 | [docs/openclaw-api.md](docs/openclaw-api.md) | OpenClaw HTTP 接口（后端联调） |
 | [docs/websocket.md](docs/websocket.md) | WebSocket 通信协议 |
