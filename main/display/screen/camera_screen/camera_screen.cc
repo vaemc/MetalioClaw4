@@ -1,12 +1,19 @@
 #include "camera_screen.h"
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <inttypes.h>
+#include <strings.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cstdio>
 #include <cstring>
+#include <string>
+#include <vector>
 
 #include "esp_check.h"
 #include "esp_heap_caps.h"
@@ -29,7 +36,9 @@
 #include "esp_lcd_panel_io.h"
 
 #include "IOExpander.hpp"
+#include "SdCardManager.hpp"
 #include "home_screen/home_screen.h"
+#include "jpg/image_to_jpeg.h"
 #include "screen_util.h"
 
 // 由 boards/metalio-claw-4/esp_lcd_nv3051f.c 提供：重发 NV3051F 厂商初始化序列。
@@ -58,9 +67,29 @@ constexpr int kCameraAreaW  = 720;
 constexpr int kCameraAreaH  = 600;
 constexpr int kButtonStripH = kPanelH - kCameraAreaH;     // 120
 constexpr int kButtonStripY = kCameraAreaH;               // 600
+constexpr int kGalleryHeaderH = 90;
+constexpr int kPad = 16;
 
 // V4L2 缓冲组数（与原例程一致）
 constexpr int kCameraBufferNum = 2;
+
+// 拍照保存：缩小分辨率 + JPEG 质量（见 camera_screen.h 中 CAMERA_JPEG_QUALITY）。
+constexpr int      kSaveW         = 360;
+constexpr int      kSaveH         = 300;
+constexpr uint8_t  kJpegQuality   = CAMERA_JPEG_QUALITY;
+constexpr int      kGalleryThumbW   = 220;
+constexpr int      kGalleryThumbH   = 165;
+constexpr int      kMaxGalleryItems = 48;
+constexpr size_t   kMaxNameLen      = 256;
+constexpr const char* kLvSdRoot     = "S:/sdcard";
+constexpr const char* kPosixSdRoot  = "/sdcard";
+constexpr const char* kGalleryIconPath = "A:ic_s_camera_picture.spng";
+
+enum class ViewMode {
+    kCamera,
+    kGallery,
+    kViewer,
+};
 
 // 摄像头供电稳定时间 / LCD 恢复等待。
 // OV2710 PWDN 拉低（通电）到 SCCB 可读，硬件需要 ~5ms；XCLK 启动后还需要
@@ -96,14 +125,29 @@ struct CameraDev {
 // 全局状态（CameraScreen 是单例，一次只能存在一个实例）
 // ---------------------------------------------------------------------------
 struct UiState {
-    lv_obj_t* screen      = nullptr;
-    lv_obj_t* canvas      = nullptr;
-    lv_obj_t* btn_capture = nullptr;
-    lv_obj_t* btn_label   = nullptr;
-    lv_obj_t* status_lbl  = nullptr;   // “正在启动摄像头…” / 错误提示
+    lv_obj_t* screen         = nullptr;
+    lv_obj_t* camera_panel   = nullptr;
+    lv_obj_t* canvas         = nullptr;
+    lv_obj_t* gallery_panel   = nullptr;
+    lv_obj_t* gallery_header  = nullptr;
+    lv_obj_t* gallery_scroll  = nullptr;
+    lv_obj_t* gallery_empty   = nullptr;
+    lv_obj_t* btn_gallery_back = nullptr;
+    lv_obj_t* viewer_panel    = nullptr;
+    lv_obj_t* viewer_img      = nullptr;
+    lv_obj_t* btn_viewer_del  = nullptr;
+    lv_obj_t* bottom_strip    = nullptr;
+    lv_obj_t* btn_capture     = nullptr;
+    lv_obj_t* btn_label       = nullptr;
+    lv_obj_t* btn_tab_gallery = nullptr;
+    lv_obj_t* status_lbl      = nullptr;
 };
 
 UiState s_ui;
+ViewMode s_view_mode = ViewMode::kCamera;
+volatile bool s_save_in_progress = false;
+lv_timer_t* s_status_clear_timer = nullptr;
+char s_viewer_posix_path[kMaxNameLen + 16] = {};
 
 // camera_out_buf 与 LVGL canvas 绑定 —— 只分配一次、永不释放，避免重复进入摄像头屏幕时
 // 反复申请 1.3 MB 的 PSRAM。摄像头采集任务直接覆写这个缓冲。
@@ -485,6 +529,425 @@ void post_status_clear() {
     }
 }
 
+void schedule_status_clear(uint32_t delay_ms) {
+    if (esp_lv_adapter_lock(200) != ESP_OK) {
+        return;
+    }
+    if (s_status_clear_timer != nullptr) {
+        lv_timer_delete(s_status_clear_timer);
+        s_status_clear_timer = nullptr;
+    }
+    s_status_clear_timer = lv_timer_create(
+        [](lv_timer_t* t) {
+            post_status_clear();
+            lv_timer_delete(t);
+            s_status_clear_timer = nullptr;
+        },
+        delay_ms, nullptr);
+    lv_timer_set_repeat_count(s_status_clear_timer, 1);
+    esp_lv_adapter_unlock();
+}
+
+bool IsJpgFilename(const char* name) {
+    if (name == nullptr) {
+        return false;
+    }
+    size_t len = std::strlen(name);
+    if (len < 5) {
+        return false;
+    }
+    return strcasecmp(name + len - 4, ".jpg") == 0;
+}
+
+void DownscaleCanvas(uint8_t* dst, int dst_w, int dst_h) {
+    if (s_canvas_buf == nullptr || dst == nullptr) {
+        return;
+    }
+    for (int y = 0; y < dst_h; y++) {
+        const int src_y = y * kCameraAreaH / dst_h;
+        for (int x = 0; x < dst_w; x++) {
+            const int src_x = x * kCameraAreaW / dst_w;
+            const uint8_t* src_px = s_canvas_buf + (src_y * kCameraAreaW + src_x) * 3;
+            uint8_t* dst_px = dst + (y * dst_w + x) * 3;
+            // 保持 B-G-R 字节序（与预览 canvas / P4 硬件 JPEG 输入一致）。
+            dst_px[0] = src_px[0];
+            dst_px[1] = src_px[1];
+            dst_px[2] = src_px[2];
+        }
+    }
+}
+
+void save_photo_task(void* /*arg*/) {
+    const size_t bgr_size = static_cast<size_t>(kSaveW) * kSaveH * 3;
+    uint8_t* bgr = static_cast<uint8_t*>(
+        heap_caps_malloc(bgr_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (bgr == nullptr) {
+        post_status_text("内存不足，保存失败", 0xFF5555);
+        s_save_in_progress = false;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    DownscaleCanvas(bgr, kSaveW, kSaveH);
+
+    uint8_t* jpeg_data = nullptr;
+    size_t jpeg_len = 0;
+    const bool ok = image_to_jpeg(bgr, bgr_size, kSaveW, kSaveH, V4L2_PIX_FMT_BGR24,
+                                  kJpegQuality, &jpeg_data, &jpeg_len);
+    heap_caps_free(bgr);
+    if (!ok || jpeg_data == nullptr || jpeg_len == 0) {
+        if (jpeg_data != nullptr) {
+            free(jpeg_data);
+        }
+        post_status_text("编码失败，未保存", 0xFF5555);
+        s_save_in_progress = false;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    char path[96];
+    const unsigned long ts_ms =
+        static_cast<unsigned long>(esp_timer_get_time() / 1000ULL);
+    std::snprintf(path, sizeof(path), "%s/IMG_%lu.jpg", kPosixSdRoot, ts_ms);
+
+    FILE* file = fopen(path, "wb");
+    if (file == nullptr) {
+        free(jpeg_data);
+        post_status_text("写入失败，未保存", 0xFF5555);
+        s_save_in_progress = false;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    const size_t written = fwrite(jpeg_data, 1, jpeg_len, file);
+    fclose(file);
+    free(jpeg_data);
+
+    if (written != jpeg_len) {
+        post_status_text("写入失败，未保存", 0xFF5555);
+    } else {
+        ESP_LOGI(TAG, "saved photo %s (%u bytes)", path, static_cast<unsigned>(jpeg_len));
+        post_status_text("已保存到 SD 卡", 0x66FF66);
+        schedule_status_clear(2500);
+    }
+    s_save_in_progress = false;
+    vTaskDelete(nullptr);
+}
+
+void start_save_photo_task() {
+    if (s_save_in_progress) {
+        return;
+    }
+    s_save_in_progress = true;
+    post_status_text("正在保存…", 0xFFFFFF);
+    if (xTaskCreatePinnedToCore(save_photo_task, "cam_save", 12 * 1024, nullptr,
+                                tskIDLE_PRIORITY + 2, nullptr, 0) != pdPASS) {
+        s_save_in_progress = false;
+        post_status_text("保存任务启动失败", 0xFF5555);
+    }
+}
+
+void RebuildGallery();
+void SetViewMode(ViewMode mode);
+void on_tab_back_clicked(lv_event_t* e);
+
+static inline lv_style_selector_t Sel(lv_part_t part, lv_state_t state) {
+    return static_cast<lv_style_selector_t>(part | state);
+}
+
+void RaiseGalleryHeader() {
+    if (s_ui.gallery_header != nullptr) {
+        lv_obj_move_foreground(s_ui.gallery_header);
+    }
+}
+
+void BuildGalleryHeader(lv_obj_t* parent) {
+    lv_obj_t* header = lv_obj_create(parent);
+    s_ui.gallery_header = header;
+    screen_strip_obj_chrome(header);
+    lv_obj_set_size(header, kPanelW, kGalleryHeaderH);
+    lv_obj_set_pos(header, 0, 0);
+    lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_clear_flag(header, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* back_btn = lv_button_create(header);
+    s_ui.btn_gallery_back = back_btn;
+    lv_obj_remove_style_all(back_btn);
+    lv_obj_set_size(back_btn, 72, 72);
+    lv_obj_set_style_bg_opa(back_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(back_btn, lv_color_hex(0xFFFFFF),
+                              Sel(LV_PART_MAIN, LV_STATE_PRESSED));
+    lv_obj_set_style_bg_opa(back_btn, LV_OPA_20,
+                            Sel(LV_PART_MAIN, LV_STATE_PRESSED));
+    lv_obj_set_style_radius(back_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(back_btn, 0, LV_PART_MAIN);
+    lv_obj_align(back_btn, LV_ALIGN_LEFT_MID, kPad + 8, 0);
+    screen_swipe_back_ignore(back_btn, true);
+
+    lv_obj_t* back_icon = lv_image_create(back_btn);
+    lv_image_set_src(back_icon, "A:ic_app_back.spng");
+    lv_obj_remove_flag(back_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(back_icon);
+    lv_obj_add_event_cb(back_btn, on_tab_back_clicked, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* title = lv_label_create(header);
+    lv_label_set_text(title, "相册");
+    lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(title, &font_puhui_30_4, LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_CENTER, 0, 0);
+    screen_make_input_passive(title);
+}
+
+void ApplyGalleryLayout(bool gallery_active) {
+    if (s_ui.gallery_panel == nullptr || s_ui.gallery_scroll == nullptr) {
+        return;
+    }
+    if (gallery_active) {
+        lv_obj_set_size(s_ui.gallery_panel, kPanelW, kPanelH);
+        lv_obj_set_pos(s_ui.gallery_panel, 0, 0);
+        lv_obj_set_size(s_ui.gallery_scroll, kPanelW, kPanelH - kGalleryHeaderH);
+        lv_obj_set_pos(s_ui.gallery_scroll, 0, kGalleryHeaderH);
+        if (s_ui.gallery_empty != nullptr) {
+            lv_obj_align(s_ui.gallery_empty, LV_ALIGN_CENTER, 0, kGalleryHeaderH / 2);
+        }
+        if (s_ui.viewer_panel != nullptr) {
+            lv_obj_set_size(s_ui.viewer_panel, kPanelW, kPanelH - kGalleryHeaderH);
+            lv_obj_set_pos(s_ui.viewer_panel, 0, kGalleryHeaderH);
+        }
+    } else {
+        lv_obj_set_size(s_ui.gallery_panel, kCameraAreaW, kCameraAreaH);
+        lv_obj_set_pos(s_ui.gallery_panel, 0, 0);
+        lv_obj_set_size(s_ui.gallery_scroll, kCameraAreaW, kCameraAreaH - kGalleryHeaderH);
+        lv_obj_set_pos(s_ui.gallery_scroll, 0, kGalleryHeaderH);
+        if (s_ui.viewer_panel != nullptr) {
+            lv_obj_set_size(s_ui.viewer_panel, kCameraAreaW, kCameraAreaH - kGalleryHeaderH);
+            lv_obj_set_pos(s_ui.viewer_panel, 0, kGalleryHeaderH);
+        }
+    }
+}
+
+void CollectRootJpgFiles(std::vector<std::string>& out) {
+    out.clear();
+    if (!SdCardManager::GetInstance().IsMounted()) {
+        return;
+    }
+
+    DIR* dir = opendir(kPosixSdRoot);
+    if (dir == nullptr) {
+        return;
+    }
+
+    struct dirent* ent;
+    while ((ent = readdir(dir)) != nullptr) {
+        if (ent->d_name[0] == '.' &&
+            (ent->d_name[1] == '\0' || (ent->d_name[1] == '.' && ent->d_name[2] == '\0'))) {
+            continue;
+        }
+        if (ent->d_type == DT_DIR) {
+            continue;
+        }
+        if (ent->d_type != DT_REG && ent->d_type != DT_UNKNOWN) {
+            continue;
+        }
+        if (!IsJpgFilename(ent->d_name)) {
+            continue;
+        }
+        out.emplace_back(ent->d_name);
+    }
+    closedir(dir);
+
+    std::sort(out.begin(), out.end(), std::greater<std::string>());
+    if (out.size() > static_cast<size_t>(kMaxGalleryItems)) {
+        out.resize(static_cast<size_t>(kMaxGalleryItems));
+    }
+}
+
+struct ThumbCtx {
+    char lv_path[kMaxNameLen + 16];
+    char posix_path[kMaxNameLen + 16];
+};
+
+void ClosePhotoViewer() {
+    if (s_ui.viewer_panel != nullptr) {
+        lv_obj_add_flag(s_ui.viewer_panel, LV_OBJ_FLAG_HIDDEN);
+    }
+    s_viewer_posix_path[0] = '\0';
+    if (s_view_mode == ViewMode::kViewer) {
+        s_view_mode = ViewMode::kGallery;
+    }
+}
+
+void ShowPhotoViewer(const ThumbCtx* ctx) {
+    if (s_ui.viewer_panel == nullptr || s_ui.viewer_img == nullptr || ctx == nullptr) {
+        return;
+    }
+    lv_image_set_src(s_ui.viewer_img, ctx->lv_path);
+    strlcpy(s_viewer_posix_path, ctx->posix_path, sizeof(s_viewer_posix_path));
+    lv_obj_remove_flag(s_ui.viewer_panel, LV_OBJ_FLAG_HIDDEN);
+    s_view_mode = ViewMode::kViewer;
+}
+
+void on_thumbnail_clicked(lv_event_t* e) {
+    auto* ctx = static_cast<ThumbCtx*>(lv_event_get_user_data(e));
+    if (ctx == nullptr) {
+        return;
+    }
+    ShowPhotoViewer(ctx);
+}
+
+void on_viewer_panel_clicked(lv_event_t* e) {
+    if (lv_event_get_target(e) == s_ui.btn_viewer_del) {
+        return;
+    }
+    ClosePhotoViewer();
+}
+
+void on_viewer_delete_clicked(lv_event_t* e) {
+    lv_event_stop_bubbling(e);
+    if (s_viewer_posix_path[0] == '\0') {
+        return;
+    }
+    if (unlink(s_viewer_posix_path) != 0) {
+        ESP_LOGE(TAG, "delete failed: %s", s_viewer_posix_path);
+        post_status_text("删除失败", 0xFF5555);
+        schedule_status_clear(2500);
+        return;
+    }
+    ESP_LOGI(TAG, "deleted photo: %s", s_viewer_posix_path);
+    ClosePhotoViewer();
+    RebuildGallery();
+}
+
+void SetViewMode(ViewMode mode) {
+    if (mode == ViewMode::kGallery && !SdCardManager::GetInstance().IsMounted()) {
+        post_status_text("请插入 SD 卡", 0xFFAA00);
+        schedule_status_clear(2500);
+        return;
+    }
+
+    s_view_mode = mode;
+    ClosePhotoViewer();
+
+    const bool show_camera = (mode == ViewMode::kCamera);
+    if (s_ui.camera_panel != nullptr) {
+        if (show_camera) {
+            lv_obj_remove_flag(s_ui.camera_panel, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_ui.camera_panel, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (s_ui.gallery_panel != nullptr) {
+        if (show_camera) {
+            lv_obj_add_flag(s_ui.gallery_panel, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_remove_flag(s_ui.gallery_panel, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (s_ui.bottom_strip != nullptr) {
+        if (show_camera) {
+            lv_obj_remove_flag(s_ui.bottom_strip, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_ui.bottom_strip, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (s_ui.btn_capture != nullptr) {
+        if (show_camera) {
+            lv_obj_remove_flag(s_ui.btn_capture, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_ui.btn_capture, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (s_ui.btn_tab_gallery != nullptr) {
+        if (show_camera) {
+            lv_obj_remove_flag(s_ui.btn_tab_gallery, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_ui.btn_tab_gallery, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    ApplyGalleryLayout(!show_camera);
+    if (mode == ViewMode::kGallery) {
+        RaiseGalleryHeader();
+        RebuildGallery();
+    }
+}
+
+void RebuildGallery() {
+    if (s_ui.gallery_scroll == nullptr) {
+        return;
+    }
+    lv_obj_clean(s_ui.gallery_scroll);
+
+    if (!SdCardManager::GetInstance().IsMounted()) {
+        if (s_ui.gallery_empty != nullptr) {
+            lv_label_set_text(s_ui.gallery_empty, "请插入 SD 卡");
+            lv_obj_remove_flag(s_ui.gallery_empty, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+
+    std::vector<std::string> files;
+    CollectRootJpgFiles(files);
+    if (files.empty()) {
+        if (s_ui.gallery_empty != nullptr) {
+            lv_label_set_text(s_ui.gallery_empty, "暂无照片");
+            lv_obj_remove_flag(s_ui.gallery_empty, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+
+    if (s_ui.gallery_empty != nullptr) {
+        lv_obj_add_flag(s_ui.gallery_empty, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    for (const auto& name : files) {
+        auto* ctx = new ThumbCtx;
+        std::snprintf(ctx->lv_path, sizeof(ctx->lv_path), "%s/%s", kLvSdRoot, name.c_str());
+        std::snprintf(ctx->posix_path, sizeof(ctx->posix_path), "%s/%s", kPosixSdRoot,
+                      name.c_str());
+
+        lv_obj_t* item = lv_button_create(s_ui.gallery_scroll);
+        lv_obj_set_size(item, kGalleryThumbW, kGalleryThumbH + 36);
+        lv_obj_set_style_bg_color(item, lv_color_hex(0x1A1A1A), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(item, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_radius(item, 8, LV_PART_MAIN);
+        lv_obj_set_style_border_width(item, 1, LV_PART_MAIN);
+        lv_obj_set_style_border_color(item, lv_color_hex(0x333333), LV_PART_MAIN);
+        lv_obj_set_style_pad_all(item, 4, LV_PART_MAIN);
+        lv_obj_set_flex_flow(item, LV_FLEX_FLOW_COLUMN);
+        lv_obj_set_flex_align(item, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
+                              LV_FLEX_ALIGN_CENTER);
+
+        lv_obj_t* img = lv_image_create(item);
+        lv_obj_set_size(img, kGalleryThumbW - 8, kGalleryThumbH);
+        lv_image_set_inner_align(img, LV_IMAGE_ALIGN_CENTER);
+        lv_image_set_src(img, ctx->lv_path);
+
+        lv_obj_t* cap = lv_label_create(item);
+        lv_label_set_text(cap, name.c_str());
+        lv_label_set_long_mode(cap, LV_LABEL_LONG_DOT);
+        lv_obj_set_width(cap, kGalleryThumbW - 8);
+        lv_obj_set_style_text_color(cap, lv_color_hex(0xCCCCCC), LV_PART_MAIN);
+        lv_obj_set_style_text_font(cap, &font_puhui_20_4, LV_PART_MAIN);
+        lv_obj_set_style_text_align(cap, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+
+        lv_obj_add_event_cb(item, on_thumbnail_clicked, LV_EVENT_CLICKED, ctx);
+        lv_obj_add_event_cb(
+            item,
+            [](lv_event_t* ev) { delete static_cast<ThumbCtx*>(lv_event_get_user_data(ev)); },
+            LV_EVENT_DELETE, ctx);
+    }
+}
+
+void on_tab_back_clicked(lv_event_t* /*e*/) {
+    // 无论是否在预览大图，左上角返回都直接回到待拍照页。
+    SetViewMode(ViewMode::kCamera);
+}
+
+void on_tab_gallery_clicked(lv_event_t* /*e*/) {
+    SetViewMode(ViewMode::kGallery);
+}
+
 // ---------------------------------------------------------------------------
 // 摄像头 worker 任务
 //
@@ -679,7 +1142,9 @@ void stop_camera_worker() {
 // ---------------------------------------------------------------------------
 
 void on_capture_btn_clicked(lv_event_t* /*e*/) {
+    const bool was_frozen = s_photo_frozen;
     s_photo_frozen = !s_photo_frozen;
+
     if (s_ui.btn_label != nullptr) {
         lv_label_set_text(s_ui.btn_label, s_photo_frozen ? "实时预览" : "拍照");
     }
@@ -689,6 +1154,18 @@ void on_capture_btn_clicked(lv_event_t* /*e*/) {
             s_photo_frozen ? lv_color_hex(0xC62828) : lv_color_hex(0x222222),
             LV_PART_MAIN);
     }
+
+    if (s_photo_frozen && !was_frozen) {
+        if (SdCardManager::GetInstance().IsMounted()) {
+            start_save_photo_task();
+        } else {
+            post_status_text("无 SD 卡，未保存", 0xFFAA00);
+            schedule_status_clear(3000);
+        }
+    } else if (!s_photo_frozen && was_frozen) {
+        post_status_clear();
+    }
+
     ESP_LOGI(TAG, "capture button: %s", s_photo_frozen ? "FROZEN (photo)" : "LIVE preview");
 }
 
@@ -712,12 +1189,30 @@ void on_screen_unloaded(lv_event_t* /*e*/) {
     // 屏幕被切走 -> 抹掉对 LVGL 对象的引用。worker 任务停止由
     // CameraScreen::LifecycleCallback 在同一时机负责，等 stop 完成后
     // 屏幕对象才会被 lv_obj_delete_async 真正释放，所以这里的清理仅是“标记”。
-    s_ui.screen      = nullptr;
-    s_ui.canvas      = nullptr;
-    s_ui.btn_capture = nullptr;
-    s_ui.btn_label   = nullptr;
-    s_ui.status_lbl  = nullptr;
-    s_photo_frozen   = false;
+    if (s_status_clear_timer != nullptr) {
+        lv_timer_delete(s_status_clear_timer);
+        s_status_clear_timer = nullptr;
+    }
+    s_ui.screen          = nullptr;
+    s_ui.camera_panel    = nullptr;
+    s_ui.canvas          = nullptr;
+    s_ui.gallery_panel   = nullptr;
+    s_ui.gallery_header  = nullptr;
+    s_ui.gallery_scroll  = nullptr;
+    s_ui.gallery_empty   = nullptr;
+    s_ui.btn_gallery_back = nullptr;
+    s_ui.viewer_panel    = nullptr;
+    s_ui.viewer_img      = nullptr;
+    s_ui.btn_viewer_del  = nullptr;
+    s_ui.bottom_strip    = nullptr;
+    s_ui.btn_capture     = nullptr;
+    s_ui.btn_label       = nullptr;
+    s_ui.btn_tab_gallery = nullptr;
+    s_ui.status_lbl      = nullptr;
+    s_photo_frozen       = false;
+    s_view_mode          = ViewMode::kCamera;
+    s_save_in_progress   = false;
+    s_viewer_posix_path[0] = '\0';
 }
 
 }  // namespace
@@ -728,6 +1223,9 @@ void on_screen_unloaded(lv_event_t* /*e*/) {
 lv_obj_t* CameraScreen::Create() {
     // 固定中画质：隔一帧渲染一次，平衡流畅度与画面质量。
     s_frame_interval = 2;
+    s_view_mode = ViewMode::kCamera;
+    s_photo_frozen = false;
+    s_save_in_progress = false;
 
     // canvas 缓冲：720x600 RGB888，1.296 MB。一次申请、永不释放（重复进入摄像头屏幕
     // 时复用），避免反复 1.3MB 大块 PSRAM 分配抖动。
@@ -752,32 +1250,128 @@ lv_obj_t* CameraScreen::Create() {
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
 
-    // ----- 摄像头预览 canvas（720x600） -----
-    lv_obj_t* canvas = lv_canvas_create(scr);
+    // ----- 相机预览区（720x600） -----
+    lv_obj_t* camera_panel = lv_obj_create(scr);
+    s_ui.camera_panel = camera_panel;
+    screen_strip_obj_chrome(camera_panel);
+    lv_obj_set_size(camera_panel, kCameraAreaW, kCameraAreaH);
+    lv_obj_set_pos(camera_panel, 0, 0);
+    lv_obj_set_style_bg_color(camera_panel, lv_color_black(), LV_PART_MAIN);
+    lv_obj_clear_flag(camera_panel, LV_OBJ_FLAG_SCROLLABLE);
+    screen_make_input_passive(camera_panel);
+
+    lv_obj_t* canvas = lv_canvas_create(camera_panel);
     s_ui.canvas      = canvas;
     lv_canvas_set_buffer(canvas, s_canvas_buf, kCameraAreaW, kCameraAreaH,
                          LV_COLOR_FORMAT_RGB888);
     lv_obj_set_pos(canvas, 0, 0);
-    // canvas 不接收触摸事件 —— 让 PRESSED/RELEASED 透传到屏幕，方便右滑返回手势。
     screen_make_input_passive(canvas);
 
-    // “正在启动摄像头…” 提示标签覆盖在 canvas 中央。
-    lv_obj_t* status = lv_label_create(scr);
+    lv_obj_t* status = lv_label_create(camera_panel);
     s_ui.status_lbl  = status;
     lv_label_set_text(status, "正在启动摄像头…");
     lv_obj_set_style_text_color(status, lv_color_white(), LV_PART_MAIN);
     lv_obj_set_style_text_font(status, &font_puhui_30_4, LV_PART_MAIN);
-    lv_obj_align(status, LV_ALIGN_TOP_MID, 0, kCameraAreaH / 2 - 30);
+    lv_obj_align(status, LV_ALIGN_CENTER, 0, 0);
     screen_make_input_passive(status);
+
+    // ----- 相册区（默认隐藏，进入后全屏 + 顶部 header） -----
+    lv_obj_t* gallery_panel = lv_obj_create(scr);
+    s_ui.gallery_panel = gallery_panel;
+    screen_strip_obj_chrome(gallery_panel);
+    lv_obj_set_size(gallery_panel, kPanelW, kPanelH);
+    lv_obj_set_pos(gallery_panel, 0, 0);
+    lv_obj_set_style_bg_color(gallery_panel, lv_color_black(), LV_PART_MAIN);
+    lv_obj_add_flag(gallery_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(gallery_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    BuildGalleryHeader(gallery_panel);
+
+    lv_obj_t* gallery_scroll = lv_obj_create(gallery_panel);
+    s_ui.gallery_scroll = gallery_scroll;
+    screen_strip_obj_chrome(gallery_scroll);
+    lv_obj_set_size(gallery_scroll, kPanelW, kPanelH - kGalleryHeaderH);
+    lv_obj_set_pos(gallery_scroll, 0, kGalleryHeaderH);
+    lv_obj_set_style_bg_color(gallery_scroll, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_flex_flow(gallery_scroll, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(gallery_scroll, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(gallery_scroll, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_column(gallery_scroll, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(gallery_scroll, 10, LV_PART_MAIN);
+    lv_obj_set_scrollbar_mode(gallery_scroll, LV_SCROLLBAR_MODE_AUTO);
+    screen_swipe_back_ignore(gallery_scroll);
+
+    lv_obj_t* gallery_empty = lv_label_create(gallery_panel);
+    s_ui.gallery_empty = gallery_empty;
+    lv_label_set_text(gallery_empty, "暂无照片");
+    lv_obj_set_style_text_color(gallery_empty, lv_color_hex(0x9A9A9A), LV_PART_MAIN);
+    lv_obj_set_style_text_font(gallery_empty, &font_puhui_30_4, LV_PART_MAIN);
+    lv_obj_align(gallery_empty, LV_ALIGN_CENTER, 0, kGalleryHeaderH / 2);
+    lv_obj_add_flag(gallery_empty, LV_OBJ_FLAG_HIDDEN);
+    screen_make_input_passive(gallery_empty);
+
+    RaiseGalleryHeader();
+
+    // ----- 大图查看层（点击缩略图后显示） -----
+    lv_obj_t* viewer_panel = lv_obj_create(scr);
+    s_ui.viewer_panel = viewer_panel;
+    screen_strip_obj_chrome(viewer_panel);
+    lv_obj_set_size(viewer_panel, kPanelW, kPanelH - kGalleryHeaderH);
+    lv_obj_set_pos(viewer_panel, 0, kGalleryHeaderH);
+    lv_obj_set_style_bg_color(viewer_panel, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(viewer_panel, LV_OPA_90, LV_PART_MAIN);
+    lv_obj_add_flag(viewer_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(viewer_panel, on_viewer_panel_clicked, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* viewer_img = lv_image_create(viewer_panel);
+    s_ui.viewer_img = viewer_img;
+    lv_obj_set_size(viewer_img, kPanelW - 20, kPanelH - kGalleryHeaderH - 100);
+    lv_image_set_inner_align(viewer_img, LV_IMAGE_ALIGN_CENTER);
+    lv_obj_align(viewer_img, LV_ALIGN_CENTER, 0, -20);
+    screen_make_input_passive(viewer_img);
+
+    lv_obj_t* viewer_del = lv_button_create(viewer_panel);
+    s_ui.btn_viewer_del = viewer_del;
+    lv_obj_set_size(viewer_del, 160, 56);
+    lv_obj_align(viewer_del, LV_ALIGN_BOTTOM_MID, 0, -16);
+    lv_obj_set_style_radius(viewer_del, 10, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(viewer_del, lv_color_hex(0xE74C3C), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(viewer_del, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_add_event_cb(viewer_del, on_viewer_delete_clicked, LV_EVENT_CLICKED, nullptr);
+    lv_obj_t* viewer_del_lbl = lv_label_create(viewer_del);
+    lv_label_set_text(viewer_del_lbl, "删除");
+    lv_obj_set_style_text_color(viewer_del_lbl, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(viewer_del_lbl, &font_puhui_30_4, LV_PART_MAIN);
+    lv_obj_center(viewer_del_lbl);
 
     // ----- 底部按钮区（720x120 黑底） -----
     lv_obj_t* strip = lv_obj_create(scr);
+    s_ui.bottom_strip = strip;
     screen_strip_obj_chrome(strip);
     lv_obj_set_size(strip, kPanelW, kButtonStripH);
     lv_obj_set_pos(strip, 0, kButtonStripY);
     lv_obj_set_style_bg_color(strip, lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(strip, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_clear_flag(strip, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* tab_gallery = lv_button_create(strip);
+    s_ui.btn_tab_gallery = tab_gallery;
+    lv_obj_set_size(tab_gallery, 80, 80);
+    lv_obj_align(tab_gallery, LV_ALIGN_RIGHT_MID, -24, 0);
+    lv_obj_set_style_radius(tab_gallery, 40, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(tab_gallery, lv_color_hex(0x111111), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(tab_gallery, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(tab_gallery, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(tab_gallery, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(tab_gallery, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(tab_gallery, on_tab_gallery_clicked, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_t* gallery_icon = lv_image_create(tab_gallery);
+    lv_image_set_src(gallery_icon, kGalleryIconPath);
+    lv_image_set_inner_align(gallery_icon, LV_IMAGE_ALIGN_CENTER);
+    lv_obj_center(gallery_icon);
+    lv_obj_remove_flag(gallery_icon, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t* btn = lv_button_create(strip);
     s_ui.btn_capture = btn;
@@ -797,10 +1391,6 @@ lv_obj_t* CameraScreen::Create() {
     lv_obj_set_style_text_font(lbl, &font_puhui_30_4, LV_PART_MAIN);
     lv_obj_center(lbl);
 
-    // 返回交给右滑手势，不再额外画返回按钮。worker 任务的停止由
-    // LifecycleCallback(UNLOAD) 处理，顺序是：
-    //   lv_screen_load(home) -> SCREEN_UNLOADED on cam scr ->
-    //   lifecycle UNLOAD -> stop_camera_worker() -> 关闭摄像头 / 断电。
     screen_attach_swipe_back(scr, OnSwipeBack);
     lv_obj_add_event_cb(scr, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED, nullptr);
 

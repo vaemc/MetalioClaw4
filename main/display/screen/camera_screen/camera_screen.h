@@ -5,12 +5,21 @@
 #include "lvgl.h"
 #include "screen_util.h"
 
+// JPEG 保存质量（1–100）。数值越大画质越好、文件越大；越小压缩越强、体积更小。
+#ifndef CAMERA_JPEG_QUALITY
+#define CAMERA_JPEG_QUALITY 55
+#endif
+
 // ---------------------------------------------------------------------------
 // CameraScreen
 //
 // 720x720 全屏摄像头 App：
-//   - 屏幕上方 720x600  : 实时预览 (LVGL canvas, RGB888)
-//   - 屏幕下方 720x120  : 黑色按钮区，居中「拍照 / 实时预览」按钮（固定中画质预览）
+//   - 屏幕上方 720x600  : 实时预览 / 相册网格 / 大图查看
+//   - 屏幕下方 720x120  : 「拍照」+ 相册图标；相册页全屏显示顶部 header（返回 + 标题）
+//
+// 拍照：冻结当前画面；有 SD 卡时保存 JPG 到 /sdcard 根目录（质量见 CAMERA_JPEG_QUALITY）。
+//       无 SD 卡时仍显示照片，但提示「无 SD 卡，未保存」。
+// 相册：仅 SD 卡已挂载时可进入，展示根目录 .jpg 缩略图网格。
 //
 // 数据流（与 esp32-p4-395-camera-lcd 例程一致）：
 //   OV2710 (1920x1080) --[V4L2/MIPI-CSI/ISP]--> RGB565 / YUYV / UYVY / RGB24

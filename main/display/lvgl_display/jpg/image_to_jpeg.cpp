@@ -124,12 +124,17 @@ static uint8_t* convert_input_to_encoder_buf(const uint8_t* src, uint16_t width,
         return buf;
     }
 
-    // RGB 转换为 YUV422 (YCbYCr) 再输入
+    // RGB / BGR 转换为 YUV422 (YCbYCr) 再输入
     // 见 https://github.com/78/xiaozhi-esp32/issues/1380#issuecomment-3497156378
-    else if (format == V4L2_PIX_FMT_RGB24 || format == V4L2_PIX_FMT_RGB565 || format == V4L2_PIX_FMT_RGB565X) {
+    else if (format == V4L2_PIX_FMT_BGR24 || format == V4L2_PIX_FMT_RGB24 ||
+             format == V4L2_PIX_FMT_RGB565 || format == V4L2_PIX_FMT_RGB565X) {
         esp_imgfx_pixel_fmt_t in_pixel_fmt = ESP_IMGFX_PIXEL_FMT_RGB888;
         uint32_t src_len = 0;
         switch (format) {
+            case V4L2_PIX_FMT_BGR24:
+                in_pixel_fmt = ESP_IMGFX_PIXEL_FMT_BGR888;
+                src_len = static_cast<uint32_t>(width * height * 3);
+                break;
             case V4L2_PIX_FMT_RGB24:
                 in_pixel_fmt = ESP_IMGFX_PIXEL_FMT_RGB888;
                 src_len = static_cast<uint32_t>(width * height * 3);
@@ -222,6 +227,23 @@ static uint8_t* convert_input_to_hw_encoder_buf(const uint8_t* src, uint16_t wid
         memcpy(buf, src, sz);
         if (out_fmt)
             *out_fmt = JPEG_ENCODE_IN_FORMAT_GRAY;
+        if (out_size)
+            *out_size = sz;
+        return buf;
+    }
+
+    if (format == V4L2_PIX_FMT_BGR24) {
+        int sz = (int)width * (int)height * 3;
+        uint8_t* buf = (uint8_t*)malloc_psram(sz);
+        if (!buf) {
+            ESP_LOGE(TAG, "malloc_psram failed");
+            return NULL;
+        }
+        // ESP32-P4 硬件 JPEG 的 RGB888 输入与 MIPI 屏一致，内存布局为 B-G-R，
+        // 不能在此处做 R/B 互换（否则蓝色会偏橘红）。
+        memcpy(buf, src, sz);
+        if (out_fmt)
+            *out_fmt = JPEG_ENCODE_IN_FORMAT_RGB888;
         if (out_size)
             *out_size = sz;
         return buf;

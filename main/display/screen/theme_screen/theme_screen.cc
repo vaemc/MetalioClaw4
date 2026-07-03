@@ -7,7 +7,6 @@
 
 #include "esp_log.h"
 
-#include "application.h"
 #include "home_screen/home_screen.h"
 #include "screen_util.h"
 #include "theme_manager.h"
@@ -67,6 +66,7 @@ inline lv_style_selector_t Sel(lv_part_t part, lv_state_t state) {
 void OnSwipeBack();
 void OpenConfirmDialog(int theme_id);
 void CloseDialog();
+void GoHomeWithCurrentTheme();
 
 // ---- 卡片点击 ----
 void OnCardClicked(lv_event_t* e) {
@@ -218,7 +218,7 @@ void BuildContent(lv_obj_t* parent) {
     }
 
     lv_obj_t* hint = lv_label_create(parent);
-    lv_label_set_text(hint, "切换主题后将自动重启设备以应用新主题");
+    lv_label_set_text(hint, "切换后将立即应用，并返回主页查看新图标");
     lv_obj_set_style_text_color(hint, lv_color_hex(kColorSubtle), LV_PART_MAIN);
     lv_obj_set_style_text_font(hint, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -20);
@@ -246,12 +246,21 @@ void OnCancelClicked(lv_event_t* /*e*/) { CloseDialog(); }
 
 void OnConfirmClicked(lv_event_t* /*e*/) {
     const int target = s_dlg.target_theme;
-    // 把状态先清掉再 Reboot —— 即便 Reboot 在某些场景延迟生效，
-    // dialog 也不会留个无主的指针在 s_dlg 里。
     s_dlg = DialogState{};
-    ESP_LOGW(TAG, "switch theme -> theme%d, rebooting", target);
+    ESP_LOGI(TAG, "switch theme -> theme%d (hot apply)", target);
     ThemeManager::SetCurrentThemeId(target);
-    Application::GetInstance().Reboot();
+    s_ui.current_theme = target;
+    HomeScreen::ResetToFirstPage();
+    GoHomeWithCurrentTheme();
+}
+
+void GoHomeWithCurrentTheme() {
+    lv_obj_t* old_scr = lv_screen_active();
+    lv_obj_t* home = HomeScreen::Create();
+    lv_screen_load(home);
+    if (old_scr != nullptr && old_scr != home) {
+        lv_obj_delete_async(old_scr);
+    }
 }
 
 void OpenConfirmDialog(int theme_id) {
@@ -302,7 +311,7 @@ void OpenConfirmDialog(int theme_id) {
     lv_obj_remove_flag(title, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t* desc = lv_label_create(card);
-    lv_label_set_text(desc, "确定后设备将自动重启");
+    lv_label_set_text(desc, "确定后将立即应用并返回主页");
     lv_obj_set_style_text_color(desc, lv_color_hex(kColorSubtle), LV_PART_MAIN);
     lv_obj_set_style_text_font(desc, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_align(desc, LV_ALIGN_CENTER, 0, -10);
@@ -336,7 +345,7 @@ void OpenConfirmDialog(int theme_id) {
     lv_obj_add_event_cb(ok, OnConfirmClicked, LV_EVENT_CLICKED, nullptr);
     {
         lv_obj_t* lbl = lv_label_create(ok);
-        lv_label_set_text(lbl, "切换并重启");
+        lv_label_set_text(lbl, "切换");
         lv_obj_set_style_text_color(lbl, lv_color_hex(kColorText), LV_PART_MAIN);
         lv_obj_set_style_text_font(lbl, &font_puhui_30_4, LV_PART_MAIN);
         lv_obj_center(lbl);
@@ -350,12 +359,7 @@ void OnScreenUnloaded(lv_event_t* /*e*/) {
 }
 
 void OnSwipeBack() {
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* home = HomeScreen::Create();
-    lv_screen_load(home);
-    if (old_scr != nullptr && old_scr != home) {
-        lv_obj_delete_async(old_scr);
-    }
+    GoHomeWithCurrentTheme();
 }
 
 }  // namespace

@@ -59,17 +59,16 @@
 
 static std::string uartBuffer;
 
-// Single global handle to the NV3051F panel IO so feature screens (e.g. the
-// camera screen) can replay the vendor DCS init sequence after the camera
-// driver pulses the shared GPIO 3 reset line.  Set during InitializeLCD().
+// NV3051F panel IO 的全局句柄，供功能界面（如相机界面）在摄像头驱动
+// 对共享 GPIO 3 复位线发出脉冲后重放厂商 DCS 初始化序列。
+// 在 InitializeLCD() 中赋值。
 static esp_lcd_panel_io_handle_t s_metalio_claw_4_panel_io = NULL;
 
 extern "C" esp_lcd_panel_io_handle_t metalio_claw_4_get_panel_io() { return s_metalio_claw_4_panel_io; }
 
-// Single global handle to the on-board I2C master bus (port 1, GPIO 7/8).
-// Camera SCCB must reuse this handle instead of allocating its own controller
-// on the same physical pins, otherwise the two I2C peripherals fight on the
-// bus and GT911 / TCA9555 transactions start failing.
+// 板载 I2C 主总线（端口 1，GPIO 7/8）的全局句柄。
+// 摄像头 SCCB 必须复用此句柄，而不是在同一物理引脚上再分配控制器，
+// 否则两个 I2C 外设会抢总线，导致 GT911 / TCA9555 通信失败。
 static i2c_master_bus_handle_t s_metalio_claw_4_i2c_bus = NULL;
 
 extern "C" i2c_master_bus_handle_t metalio_claw_4_get_i2c_bus() { return s_metalio_claw_4_i2c_bus; }
@@ -194,8 +193,7 @@ private:
 
     static esp_err_t bsp_enable_dsi_phy_power(void) {
 #if MIPI_DSI_PHY_PWR_LDO_CHAN > 0
-        // Turn on the power for MIPI DSI PHY, so it can go from "No Power" state to "Shutdown"
-        // state
+        // 为 MIPI DSI PHY 上电，使其从「无电源」状态进入「关闭」状态
         static esp_ldo_channel_handle_t phy_pwr_chan = NULL;
         esp_ldo_channel_config_t ldo_cfg = {
             .chan_id = MIPI_DSI_PHY_PWR_LDO_CHAN,
@@ -203,7 +201,7 @@ private:
         };
         esp_ldo_acquire_channel(&ldo_cfg, &phy_pwr_chan);
         ESP_LOGI(TAG, "MIPI DSI PHY Powered on");
-#endif  // BSP_MIPI_DSI_PHY_PWR_LDO_CHAN > 0
+#endif  // 当 MIPI_DSI_PHY_PWR_LDO_CHAN > 0 时
 
         return ESP_OK;
     }
@@ -232,7 +230,7 @@ private:
         esp_lcd_new_dsi_bus(&bus_config, &mipi_dsi_bus);
 
         ESP_LOGI(TAG, "Install MIPI DSI LCD control panel (NV3051F)");
-        // we use DBI interface to send LCD commands and parameters
+        // 使用 DBI 接口发送 LCD 命令和参数
         esp_lcd_dbi_io_config_t dbi_config = NV3051F_PANEL_IO_DBI_CONFIG();
         esp_lcd_new_panel_io_dbi(mipi_dsi_bus, &dbi_config, &panel_io_handle);
 
@@ -289,8 +287,8 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
         // ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-        // Publish the panel IO so other components (camera screen) can replay
-        // the vendor DCS init sequence after the camera reset pulse on GPIO 3.
+        // 暴露 panel IO 句柄，供其他组件（相机界面）在 GPIO 3 摄像头
+        // 复位脉冲后重放厂商 DCS 初始化序列。
         s_metalio_claw_4_panel_io = panel_io_handle;
     }
 
@@ -311,7 +309,7 @@ private:
         esp_lcd_new_dsi_bus(&bus_config, &mipi_dsi_bus);
 
         ESP_LOGI(TAG, "Install MIPI DSI LCD control panel (FL7707N)");
-        // we use DBI interface to send LCD commands and parameters
+        // 使用 DBI 接口发送 LCD 命令和参数
         esp_lcd_dbi_io_config_t dbi_config = FL7707N_PANEL_IO_DBI_CONFIG();
         esp_lcd_new_panel_io_dbi(mipi_dsi_bus, &dbi_config, &panel_io_handle);
 
@@ -369,10 +367,9 @@ private:
         ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
         // ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
-        // Publish the panel IO so other components (camera screen) can replay
-        // the vendor DCS init sequence after the camera reset pulse on GPIO 3.
-        // NOTE: camera_screen 当前调用的是 esp_lcd_nv3051f_replay_vendor_init，
-        // 切到 FL7707N 时如需摄像头复位恢复，需要在 esp_lcd_fl7707n.c 加同名
+        // 暴露 panel IO 句柄，供其他组件（相机界面）在 GPIO 3 摄像头
+        // 复位脉冲后重放厂商 DCS 初始化序列。
+        // 注意：camera_screen 当前调用的是 esp_lcd_nv3051f_replay_vendor_init，
         // replay 函数并在 camera_screen 里按宏分发。
         s_metalio_claw_4_panel_io = panel_io_handle;
     }

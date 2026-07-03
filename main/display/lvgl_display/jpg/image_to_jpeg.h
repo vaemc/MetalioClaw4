@@ -10,6 +10,11 @@
 
 typedef uint32_t v4l2_pix_fmt_t; // see linux/videodev2.h for details
 
+// LVGL canvas / NV3051F 预览缓冲为 B-G-R 字节序，拍照保存时用此格式告知编码器。
+#ifndef V4L2_PIX_FMT_BGR24
+#define V4L2_PIX_FMT_BGR24 v4l2_fourcc('B', 'G', 'R', '3')
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

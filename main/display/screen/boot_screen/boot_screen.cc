@@ -12,7 +12,7 @@ lv_obj_t* BootScreen::Create() {
 
     lv_obj_t * eaf_anim = lv_eaf_create(screen);
     lv_eaf_set_src(eaf_anim, "A:ic_boot_animation.eaf");
-    lv_eaf_set_frame_delay(eaf_anim,1); 
+    lv_eaf_set_frame_delay(eaf_anim,30); 
     lv_eaf_set_loop_count(eaf_anim,0);
     lv_obj_center(eaf_anim);
     return screen;

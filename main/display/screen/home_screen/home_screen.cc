@@ -574,8 +574,7 @@ constexpr AppEntry kApps[] = {
 constexpr int kTotalApps = static_cast<int>(sizeof(kApps) / sizeof(kApps[0]));
 
 // 当前主题下，每个 app 解析出来的完整 LVGL 路径。在 HomeScreen::Create()
-// 入口处由 EnsureIconPathsBuilt() 填一次；切换主题需要重启，所以这份缓存
-// 不需要主动刷新，重启后新一轮 Create() 会读到新的主题 id 再写一遍。
+// 入口处由 EnsureIconPathsBuilt() 填写；主题 id 变化时会自动重新拼接。
 //
 // 路径字符串必须在 lv_image 引用期间一直有效（lv_image_set_src 不复制内
 // 存），所以放在 namespace 静态而不是栈或函数局部。
@@ -1974,6 +1973,10 @@ void OnRefreshStatusBarAsync(void* /*user_data*/) {
     if (s_home_status != nullptr) {
         UpdateHomeStatusBar(s_home_status);
     }
+}
+
+void HomeScreen::ResetToFirstPage() {
+    s_last_home_page = 0;
 }
 
 void HomeScreen::RefreshStatusBar() {

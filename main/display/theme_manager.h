@@ -12,10 +12,8 @@
 //
 // HomeScreen 在构建时读取当前主题 id，并拼接成具体图标资源路径。
 // 用户在「主题」App 中选择新主题后：
-//   SetCurrentThemeId(N) -> 写 NVS -> Application::Reboot()
-//   重启后 HomeScreen 按新前缀加载图标，整个 UI 焕然一新。
-// 故意不做"运行时热替换"——避免遍历整棵 LVGL 树重新 set_src 的复杂性，
-// 也保证所有屏幕（不只是主屏）下次启动都用一致主题。
+//   SetCurrentThemeId(N) -> 写 NVS -> HomeScreen::Create() 按新前缀加载图标。
+// 主屏在运行时重建即可热切换，无需重启设备。
 // ---------------------------------------------------------------------------
 namespace ThemeManager {
 
