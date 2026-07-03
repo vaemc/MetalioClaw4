@@ -1,0 +1,57 @@
+name: Release Metalio Claw4
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 2.0.5)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish Metalio Claw4
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:release-v5.5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [[ -z "$VERSION" ]]; then
+            echo "Failed to resolve version" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "artifact=Metalio_Claw4_${VERSION}.bin" >> "$GITHUB_OUTPUT"
+
+      - name: Build firmware
+        shell: bash
+        run: |
+          source "$IDF_PATH/export.sh"
+          idf.py -DBOARD_NAME=metalio-claw-4 -DBOARD_TYPE=metalio-claw-4 build
+          idf.py merge-bin
+          cp build/merged-binary.bin "${{ steps.version.outputs.artifact }}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', steps.version.outputs.version) || github.ref_name }}
+          name: Metalio Claw4 v${{ steps.version.outputs.version }}
+          files: ${{ steps.version.outputs.artifact }}
+          generate_release_notes: true
