@@ -1,6 +1,6 @@
 # Metalio Claw4
 
-**Chinese** | [English](README.md)
+**English** | [Chinese](README_zn.md)
 
 **Quick Links**
 
