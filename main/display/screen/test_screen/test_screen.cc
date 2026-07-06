@@ -10,6 +10,7 @@
 #include "gps_test.h"
 #include "sd_card_test.h"
 #include "cell_4g_test.h"
+#include "wifi_test.h"
 #include "screen_util.h"
 #include "test_ui_common.h"
 
@@ -63,6 +64,7 @@ void OnScreenUnloaded(lv_event_t* /*e*/) {
     Qmc6309Test::OnUnload();
     SdCardTest::OnUnload();
     Cell4gTest::OnUnload();
+    WifiTest::OnUnload();
     GpsTest::OnUnload();
     s_screen = nullptr;
 }
@@ -75,6 +77,7 @@ void OnScreenLoadItems() {
     Qmc6309Test::OnLoad();
     SdCardTest::OnLoad();
     Cell4gTest::OnLoad();
+    WifiTest::OnLoad();
     GpsTest::OnLoad();
 }
 
@@ -144,6 +147,7 @@ lv_obj_t* TestScreen::Create() {
     AudioTest::BuildRow(body);
     CameraTest::BuildRow(body);
     Cell4gTest::BuildRow(body);
+    WifiTest::BuildRow(body);
     Sc7a20hTest::BuildRow(body);
     Qmc6309Test::BuildRow(body);
     SdCardTest::BuildRow(body);
@@ -178,6 +182,7 @@ void TestScreen::LifecycleCallback(screen_lifecycle_event_t event) {
         Qmc6309Test::OnUnload();
         SdCardTest::OnUnload();
         Cell4gTest::OnUnload();
+        WifiTest::OnUnload();
         GpsTest::OnUnload();
     }
 }
