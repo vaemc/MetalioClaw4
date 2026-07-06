@@ -23,8 +23,7 @@ constexpr const char* TAG = "Cell4gTest";
 
 constexpr int  kSimSlotExternal = 0;
 constexpr int  kSimSlotInternal = 1;
-constexpr uint32_t kColorBtnIdle     = 0x2563EB;
-constexpr uint32_t kColorBtnDisabled = 0x4B5563;
+constexpr uint32_t kAutoStartDelayMs = 1000;
 
 // 手册：AT+ECPING="url",number,size,delay(ms)
 constexpr int      kPingCount    = 3;
@@ -45,8 +44,6 @@ enum class TestState {
 
 struct SimRowUi {
     lv_obj_t* status_icon = nullptr;
-    lv_obj_t* test_btn    = nullptr;
-    lv_obj_t* btn_lbl     = nullptr;
     lv_obj_t* hint_lbl    = nullptr;
     int       slot        = 0;
 };
@@ -57,12 +54,14 @@ struct TestDoneMsg {
     char detail[64];
 };
 
-TestState s_state  = TestState::Idle;
-bool      s_loaded = false;
-bool      s_modem_busy = false;
-uint32_t  s_last_cfun_ms = 0;
-SimRowUi  s_internal{};
-SimRowUi  s_external{};
+TestState    s_state            = TestState::Idle;
+bool         s_loaded           = false;
+bool         s_auto_sequence    = false;
+bool         s_modem_busy       = false;
+uint32_t     s_last_cfun_ms     = 0;
+lv_timer_t*  s_auto_start_timer = nullptr;
+SimRowUi     s_internal{};
+SimRowUi     s_external{};
 
 constexpr uint32_t kPostCfunSettleMs = 40000;
 
@@ -389,39 +388,14 @@ void SetHint(SimRowUi* row, const char* text, bool error) {
         LV_PART_MAIN);
 }
 
-void SetButtonLabel(SimRowUi* row, const char* text) {
-    if (row == nullptr || row->btn_lbl == nullptr) {
-        return;
-    }
-    lv_label_set_text(row->btn_lbl, text);
-}
-
-void StyleTestButton(SimRowUi* row, bool enabled, bool active) {
-    if (row == nullptr || row->test_btn == nullptr) {
-        return;
-    }
-    if (enabled) {
-        lv_obj_add_flag(row->test_btn, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_bg_color(
-            row->test_btn,
-            lv_color_hex(active ? kColorBtnIdle : kColorBtnIdle),
-            LV_PART_MAIN);
-    } else {
-        lv_obj_remove_flag(row->test_btn, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_bg_color(row->test_btn,
-                                  lv_color_hex(kColorBtnDisabled),
-                                  LV_PART_MAIN);
+void StopAutoStartTimer() {
+    if (s_auto_start_timer != nullptr) {
+        lv_timer_delete(s_auto_start_timer);
+        s_auto_start_timer = nullptr;
     }
 }
 
-void RefreshButtonStates() {
-    const bool testing_internal = s_state == TestState::TestingInternal;
-    const bool testing_external = s_state == TestState::TestingExternal;
-    const bool busy = testing_internal || testing_external;
-
-    StyleTestButton(&s_internal, !busy || testing_internal, testing_internal);
-    StyleTestButton(&s_external, !busy || testing_external, testing_external);
-}
+void StartTest(int slot);
 
 void OnTestDoneAsync(void* user_data) {
     auto* msg = static_cast<TestDoneMsg*>(user_data);
@@ -429,11 +403,11 @@ void OnTestDoneAsync(void* user_data) {
         delete msg;
         return;
     }
+
     SimRowUi* row = RowForSlot(msg->slot);
     s_state = TestState::Idle;
 
     if (row != nullptr) {
-        SetButtonLabel(row, "测试");
         if (msg->pass) {
             SetHint(row, "PING成功", false);
             TestUiUpdateStatus(row->status_icon, true);
@@ -442,7 +416,14 @@ void OnTestDoneAsync(void* user_data) {
             TestUiUpdateStatus(row->status_icon, false);
         }
     }
-    RefreshButtonStates();
+
+    if (s_auto_sequence && msg->slot == kSimSlotInternal) {
+        StartTest(kSimSlotExternal);
+    } else if (s_auto_sequence && msg->slot == kSimSlotExternal) {
+        s_auto_sequence = false;
+        ESP_LOGI(TAG, "auto 4G test sequence finished");
+    }
+
     delete msg;
 }
 
@@ -534,10 +515,8 @@ void StartTest(int slot) {
                                      : TestState::TestingExternal;
     SimRowUi* row = RowForSlot(slot);
     if (row != nullptr) {
-        SetButtonLabel(row, "测试中…");
-        SetHint(row, "PING百度…", false);
+        SetHint(row, "测试中…", false);
     }
-    RefreshButtonStates();
 
     if (xTaskCreate(Cell4gTestTask, "cell4g_test", 8192,
                     reinterpret_cast<void*>(static_cast<intptr_t>(slot)), 5,
@@ -545,23 +524,28 @@ void StartTest(int slot) {
         ESP_LOGE(TAG, "create test task failed");
         s_state = TestState::Idle;
         if (row != nullptr) {
-            SetButtonLabel(row, "测试");
             SetHint(row, "任务创建失败", true);
+            TestUiUpdateStatus(row->status_icon, false);
         }
-        RefreshButtonStates();
+        if (s_auto_sequence && slot == kSimSlotInternal) {
+            StartTest(kSimSlotExternal);
+        } else if (s_auto_sequence) {
+            s_auto_sequence = false;
+        }
     }
 }
 
-void OnInternalTestClicked(lv_event_t* /*e*/) {
+void OnAutoStartTimer(lv_timer_t* /*t*/) {
+    s_auto_start_timer = nullptr;
+    if (!s_loaded) {
+        return;
+    }
+    ESP_LOGI(TAG, "auto start: internal SIM first");
     StartTest(kSimSlotInternal);
 }
 
-void OnExternalTestClicked(lv_event_t* /*e*/) {
-    StartTest(kSimSlotExternal);
-}
-
 lv_obj_t* CreateSubRow(lv_obj_t* parent, const char* title, int slot,
-                       SimRowUi* ui, lv_event_cb_t cb) {
+                       SimRowUi* ui) {
     lv_obj_t* row = lv_obj_create(parent);
     screen_strip_obj_chrome(row);
     lv_obj_set_size(row, kTestPanelW - 2 * kTestSideMargin - 32, kTestRowH - 8);
@@ -584,32 +568,14 @@ lv_obj_t* CreateSubRow(lv_obj_t* parent, const char* title, int slot,
     lv_obj_set_width(label, 200);
 
     lv_obj_t* hint = lv_label_create(row);
-    lv_label_set_text(hint, "--");
+    lv_label_set_text(hint, "等待测试…");
     lv_obj_set_style_text_color(hint, lv_color_hex(kTestColorTextDim),
                                 LV_PART_MAIN);
     lv_obj_set_style_text_font(hint, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_set_flex_grow(hint, 1);
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
 
-    lv_obj_t* btn = lv_button_create(row);
-    lv_obj_remove_style_all(btn);
-    lv_obj_set_size(btn, 120, 52);
-    lv_obj_set_style_radius(btn, 14, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(kColorBtnIdle), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
-    screen_swipe_back_ignore(btn, true);
-
-    lv_obj_t* btn_lbl = lv_label_create(btn);
-    lv_label_set_text(btn_lbl, "测试");
-    lv_obj_set_style_text_color(btn_lbl, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(btn_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(btn_lbl);
-    lv_obj_remove_flag(btn_lbl, LV_OBJ_FLAG_CLICKABLE);
-
     ui->status_icon = status;
-    ui->test_btn    = btn;
-    ui->btn_lbl     = btn_lbl;
     ui->hint_lbl    = hint;
     ui->slot        = slot;
     return row;
@@ -634,23 +600,30 @@ void BuildRow(lv_obj_t* list) {
                           LV_FLEX_ALIGN_CENTER);
     lv_obj_remove_flag(card, LV_OBJ_FLAG_SCROLLABLE);
 
-    CreateSubRow(card, "4G·内置卡", kSimSlotInternal, &s_internal,
-                 OnInternalTestClicked);
-    CreateSubRow(card, "4G·外置卡", kSimSlotExternal, &s_external,
-                 OnExternalTestClicked);
+    CreateSubRow(card, "4G·内置卡", kSimSlotInternal, &s_internal);
+    CreateSubRow(card, "4G·外置卡", kSimSlotExternal, &s_external);
 }
 
 void OnLoad() {
     s_loaded = true;
     s_state = TestState::Idle;
-    RefreshButtonStates();
+    s_auto_sequence = true;
+    SetHint(&s_internal, "等待测试…", false);
+    SetHint(&s_external, "等待测试…", false);
+
+    StopAutoStartTimer();
+    s_auto_start_timer =
+        lv_timer_create(OnAutoStartTimer, kAutoStartDelayMs, nullptr);
+    lv_timer_set_repeat_count(s_auto_start_timer, 1);
 }
 
 void OnUnload() {
     s_loaded = false;
+    s_auto_sequence = false;
     s_state = TestState::Idle;
     s_modem_busy = false;
     s_last_cfun_ms = 0;
+    StopAutoStartTimer();
     s_internal = SimRowUi{};
     s_external = SimRowUi{};
 }

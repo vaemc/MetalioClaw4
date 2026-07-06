@@ -27,6 +27,7 @@ lv_timer_t* s_poll_timer  = nullptr;
 
 void OnPollTimer(lv_timer_t* /*t*/) {
     AudioTest::Poll();
+    CameraTest::Poll();
     Sc7a20hTest::Poll();
     Qmc6309Test::Poll();
     SdCardTest::Poll();

@@ -1,84 +1,160 @@
 #include "camera_test.h"
 
+#include <cstdio>
+
+#include "IOExpander.hpp"
 #include "camera_screen/camera_screen.h"
+#include "driver/i2c_master.h"
+#include "esp_cam_sensor_xclk.h"
 #include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "screen_util.h"
 #include "test_ui_common.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
-LV_FONT_DECLARE(font_puhui_30_4);
+
+extern "C" i2c_master_bus_handle_t metalio_claw_4_get_i2c_bus();
 
 namespace {
 
 constexpr const char* TAG = "CameraTest";
 
-constexpr int kPreviewW = 720;
-constexpr int kPreviewH = 600;
-constexpr int kBottomH  = 120;
+constexpr int      kCamPowerOnSettleMs = 200;
+constexpr int      kCamXclkSettleMs    = 50;
+constexpr int      kSccbI2cFreq        = 100000;
+constexpr int      kCamXclkPin         = 32;
+constexpr int      kCamXclkFreq        = 24000000;
+constexpr uint8_t  kOv2710Addr         = 0x36;
+constexpr uint16_t kOv2710RegPidH      = 0x300A;
+constexpr uint16_t kOv2710RegPidL      = 0x300B;
+constexpr uint8_t  kOv2710PidH         = 0x27;
+constexpr uint8_t  kOv2710PidL         = 0x10;
 
-lv_obj_t* s_status_icon     = nullptr;
-lv_obj_t* s_preview_mask    = nullptr;
-lv_obj_t* s_preview_canvas  = nullptr;
+constexpr int kPreviewH = kTestRowH - 16;
+constexpr int kPreviewW = 52;
 
-void ClosePreviewDialog() {
-    if (s_preview_mask == nullptr) {
+lv_obj_t* s_status_icon   = nullptr;
+lv_obj_t* s_value_lbl     = nullptr;
+lv_obj_t* s_preview_clip  = nullptr;
+lv_obj_t* s_preview_canvas = nullptr;
+
+bool              s_cam_powered     = false;
+bool              s_preview_started = false;
+esp_cam_sensor_xclk_handle_t s_xclk_handle = nullptr;
+i2c_master_dev_handle_t      s_sccb_dev    = nullptr;
+int64_t           s_power_on_us = 0;
+bool              s_detect_done = false;
+
+void SetErrorText(const char* msg) {
+    if (s_value_lbl == nullptr) {
         return;
     }
-    CameraScreen::StopExternalPreview();
-    lv_obj_delete(s_preview_mask);
-    s_preview_mask = nullptr;
-    s_preview_canvas = nullptr;
-    ESP_LOGI(TAG, "preview dialog closed");
+    lv_label_set_text(s_value_lbl, msg);
+    lv_obj_set_style_text_color(s_value_lbl, lv_color_hex(kTestColorError),
+                                LV_PART_MAIN);
+    TestUiUpdateStatus(s_status_icon, false);
 }
 
-void OnPreviewConfirm(bool pass) {
-    TestUiUpdateStatus(s_status_icon, pass);
-    ESP_LOGI(TAG, "user confirm camera preview: %s", pass ? "pass" : "fail");
-    ClosePreviewDialog();
+void SetPassText(const char* msg) {
+    if (s_value_lbl == nullptr) {
+        return;
+    }
+    lv_label_set_text(s_value_lbl, msg);
+    lv_obj_set_style_text_color(s_value_lbl, lv_color_hex(kTestColorTextDim),
+                                LV_PART_MAIN);
+    TestUiUpdateStatus(s_status_icon, true);
 }
 
-void OnCloseClicked(lv_event_t* /*e*/) {
-    ClosePreviewDialog();
+bool EnsureSccbDevice() {
+    if (s_sccb_dev != nullptr) {
+        return true;
+    }
+
+    i2c_master_bus_handle_t bus = metalio_claw_4_get_i2c_bus();
+    if (bus == nullptr) {
+        ESP_LOGE(TAG, "I2C bus not ready");
+        return false;
+    }
+
+    i2c_device_config_t dev_cfg = {};
+    dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dev_cfg.device_address  = kOv2710Addr;
+    dev_cfg.scl_speed_hz    = kSccbI2cFreq;
+    if (i2c_master_bus_add_device(bus, &dev_cfg, &s_sccb_dev) != ESP_OK) {
+        ESP_LOGE(TAG, "add SCCB device failed");
+        s_sccb_dev = nullptr;
+        return false;
+    }
+    return true;
 }
 
-void OnNoClicked(lv_event_t* /*e*/) {
-    OnPreviewConfirm(false);
+bool ReadSccbReg16(uint16_t reg, uint8_t* out) {
+    if (s_sccb_dev == nullptr || out == nullptr) {
+        return false;
+    }
+    const uint8_t reg_buf[2] = {
+        static_cast<uint8_t>(reg >> 8),
+        static_cast<uint8_t>(reg & 0xFF),
+    };
+    return i2c_master_transmit_receive(s_sccb_dev, reg_buf, sizeof(reg_buf),
+                                       out, 1, 200) == ESP_OK;
 }
 
-void OnYesClicked(lv_event_t* /*e*/) {
-    OnPreviewConfirm(true);
+bool StartCameraPower() {
+    if (s_cam_powered) {
+        return true;
+    }
+
+    IOExpander::getInstance().setLevel(IOExpander::Pin::CAM_PWDN, false);
+    s_cam_powered = true;
+    vTaskDelay(pdMS_TO_TICKS(kCamPowerOnSettleMs));
+
+    esp_cam_sensor_xclk_config_t xclk_cfg = {};
+    xclk_cfg.esp_clock_router_cfg.xclk_pin =
+        static_cast<gpio_num_t>(kCamXclkPin);
+    xclk_cfg.esp_clock_router_cfg.xclk_freq_hz = kCamXclkFreq;
+
+    if (esp_cam_sensor_xclk_allocate(ESP_CAM_SENSOR_XCLK_ESP_CLOCK_ROUTER,
+                                     &s_xclk_handle) != ESP_OK) {
+        ESP_LOGE(TAG, "xclk allocate failed");
+        return false;
+    }
+    if (esp_cam_sensor_xclk_start(s_xclk_handle, &xclk_cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "xclk start failed");
+        esp_cam_sensor_xclk_free(s_xclk_handle);
+        s_xclk_handle = nullptr;
+        return false;
+    }
+
+    s_power_on_us = esp_timer_get_time();
+    ESP_LOGI(TAG, "camera powered, XCLK started on GPIO%d", kCamXclkPin);
+    return true;
 }
 
-lv_obj_t* CreateBottomButton(lv_obj_t* parent, const char* text,
-                             uint32_t bg_color, lv_event_cb_t cb) {
-    lv_obj_t* btn = lv_button_create(parent);
-    lv_obj_remove_style_all(btn);
-    lv_obj_set_size(btn, 140, 56);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(bg_color), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(btn, 14, LV_PART_MAIN);
-    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, nullptr);
-    screen_swipe_back_ignore(btn, true);
-
-    lv_obj_t* lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_color(lbl, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(lbl);
-    lv_obj_remove_flag(lbl, LV_OBJ_FLAG_CLICKABLE);
-    return btn;
+void StopCameraPower() {
+    if (s_xclk_handle != nullptr) {
+        esp_cam_sensor_xclk_stop(s_xclk_handle);
+        esp_cam_sensor_xclk_free(s_xclk_handle);
+        s_xclk_handle = nullptr;
+    }
+    if (s_sccb_dev != nullptr) {
+        i2c_master_bus_rm_device(s_sccb_dev);
+        s_sccb_dev = nullptr;
+    }
+    if (s_cam_powered) {
+        IOExpander::getInstance().setLevel(IOExpander::Pin::CAM_PWDN, true);
+        s_cam_powered = false;
+    }
 }
 
-void OpenPreviewDialog() {
-    if (s_preview_mask != nullptr) {
+void TryStartInlinePreview() {
+    if (s_preview_started || s_preview_clip == nullptr) {
         return;
     }
 
-    lv_obj_t* parent = TestUiGetScreen();
-    if (parent == nullptr) {
-        ESP_LOGW(TAG, "test screen not ready");
-        return;
-    }
+    StopCameraPower();
 
     CameraScreen::PreviewBuffer preview_buf = {};
     if (!CameraScreen::PreparePreviewBuffer(&preview_buf)) {
@@ -86,82 +162,62 @@ void OpenPreviewDialog() {
         return;
     }
 
-    lv_obj_t* mask = lv_obj_create(parent);
-    s_preview_mask = mask;
-    screen_strip_obj_chrome(mask);
-    lv_obj_add_flag(mask, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(mask, kTestPanelW, kTestPanelH);
-    lv_obj_set_pos(mask, 0, 0);
-    lv_obj_set_style_bg_color(mask, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(mask, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_remove_flag(mask, LV_OBJ_FLAG_SCROLLABLE);
-    screen_swipe_back_ignore(mask, true);
-
-    lv_obj_t* preview_panel = lv_obj_create(mask);
-    screen_strip_obj_chrome(preview_panel);
-    lv_obj_set_size(preview_panel, kPreviewW, kPreviewH);
-    lv_obj_set_pos(preview_panel, 0, 0);
-    lv_obj_set_style_bg_color(preview_panel, lv_color_black(), LV_PART_MAIN);
-    lv_obj_remove_flag(preview_panel, LV_OBJ_FLAG_SCROLLABLE);
-    screen_make_input_passive(preview_panel);
-
-    lv_obj_t* canvas = lv_canvas_create(preview_panel);
-    s_preview_canvas = canvas;
-    lv_canvas_set_buffer(canvas, preview_buf.data, preview_buf.width,
+    lv_obj_remove_flag(s_preview_clip, LV_OBJ_FLAG_HIDDEN);
+    s_preview_canvas = lv_canvas_create(s_preview_clip);
+    lv_canvas_set_buffer(s_preview_canvas, preview_buf.data, preview_buf.width,
                          preview_buf.height, LV_COLOR_FORMAT_RGB888);
-    lv_obj_set_pos(canvas, 0, 0);
-    lv_obj_set_size(canvas, kPreviewW, kPreviewH);
-    screen_make_input_passive(canvas);
+    lv_obj_set_size(s_preview_canvas, preview_buf.width, preview_buf.height);
+    lv_obj_center(s_preview_canvas);
+    screen_make_input_passive(s_preview_canvas);
 
-    lv_obj_t* bottom = lv_obj_create(mask);
-    screen_strip_obj_chrome(bottom);
-    lv_obj_set_size(bottom, kTestPanelW, kBottomH);
-    lv_obj_set_pos(bottom, 0, kPreviewH);
-    lv_obj_set_style_bg_color(bottom, lv_color_hex(kTestColorCardBg),
-                              LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(bottom, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_pad_hor(bottom, 16, LV_PART_MAIN);
-    lv_obj_set_style_pad_ver(bottom, 10, LV_PART_MAIN);
-    lv_obj_set_flex_flow(bottom, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(bottom, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(bottom, 8, LV_PART_MAIN);
-    lv_obj_remove_flag(bottom, LV_OBJ_FLAG_SCROLLABLE);
-    screen_swipe_back_ignore(bottom, true);
-
-    lv_obj_t* question = lv_label_create(bottom);
-    lv_label_set_text(question, "画面是否正常？");
-    lv_obj_set_style_text_color(question, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(question, &font_puhui_30_4, LV_PART_MAIN);
-    lv_obj_remove_flag(question, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t* btn_row = lv_obj_create(bottom);
-    screen_strip_obj_chrome(btn_row);
-    lv_obj_set_size(btn_row, kTestPanelW - 32, 56);
-    lv_obj_set_style_bg_opa(btn_row, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_remove_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(btn_row, LV_FLEX_ALIGN_SPACE_EVENLY,
-                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    CreateBottomButton(btn_row, "否", kTestColorError, OnNoClicked);
-    CreateBottomButton(btn_row, "是", kTestColorHigh, OnYesClicked);
-    CreateBottomButton(btn_row, "关闭", kTestColorMuted, OnCloseClicked);
-
-    if (CameraScreen::StartExternalPreview(canvas) != ESP_OK) {
-        ESP_LOGE(TAG, "start external preview failed");
-        ClosePreviewDialog();
+    if (CameraScreen::StartExternalPreview(s_preview_canvas) != ESP_OK) {
+        ESP_LOGE(TAG, "start inline preview failed");
+        lv_obj_delete(s_preview_canvas);
+        s_preview_canvas = nullptr;
+        lv_obj_add_flag(s_preview_clip, LV_OBJ_FLAG_HIDDEN);
         return;
     }
 
-    ESP_LOGI(TAG, "preview dialog opened");
+    s_preview_started = true;
+    ESP_LOGI(TAG, "inline preview started (%dx%d clip)", kPreviewW, kPreviewH);
 }
 
-void OnRowClicked(lv_event_t* e) {
-    if (lv_event_get_target_obj(e) != lv_event_get_current_target_obj(e)) {
-        return;
+bool TryDetectSensorId() {
+    if (!EnsureSccbDevice()) {
+        SetErrorText("I2C未就绪");
+        return true;
     }
-    OpenPreviewDialog();
+
+    if (i2c_master_probe(metalio_claw_4_get_i2c_bus(), kOv2710Addr, 200) !=
+        ESP_OK) {
+        SetErrorText("SCCB无应答");
+        ESP_LOGW(TAG, "SCCB probe @0x36 failed");
+        return true;
+    }
+
+    uint8_t pid_h = 0;
+    uint8_t pid_l = 0;
+    if (!ReadSccbReg16(kOv2710RegPidH, &pid_h) ||
+        !ReadSccbReg16(kOv2710RegPidL, &pid_l)) {
+        SetErrorText("读取ID失败");
+        ESP_LOGW(TAG, "read OV2710 PID failed");
+        return true;
+    }
+
+    ESP_LOGI(TAG, "OV2710 PID=0x%02X%02X", pid_h, pid_l);
+
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "ID 0x%02X%02X", pid_h, pid_l);
+    if (pid_h == kOv2710PidH && pid_l == kOv2710PidL) {
+        SetPassText(buf);
+        TryStartInlinePreview();
+    } else {
+        lv_label_set_text(s_value_lbl, buf);
+        lv_obj_set_style_text_color(s_value_lbl, lv_color_hex(kTestColorError),
+                                    LV_PART_MAIN);
+        TestUiUpdateStatus(s_status_icon, false);
+    }
+    return true;
 }
 
 }  // namespace
@@ -170,24 +226,75 @@ namespace CameraTest {
 
 void BuildRow(lv_obj_t* list) {
     lv_obj_t* ctrl = nullptr;
-    lv_obj_t* row = TestUiCreateRowShell(list, "摄像头", &s_status_icon, &ctrl);
-    lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(row, OnRowClicked, LV_EVENT_CLICKED, nullptr);
-    screen_swipe_back_ignore(row, true);
-    screen_make_input_passive(ctrl);
+    TestUiCreateRowShell(list, "摄像头", &s_status_icon, &ctrl);
 
-    lv_obj_t* hint = lv_label_create(ctrl);
-    lv_label_set_text(hint, "点击预览");
-    lv_obj_set_style_text_color(hint, lv_color_hex(kTestColorTextDim),
+    s_value_lbl = lv_label_create(ctrl);
+    lv_label_set_text(s_value_lbl, "检测中...");
+    lv_obj_set_style_text_color(s_value_lbl, lv_color_hex(kTestColorTextDim),
                                 LV_PART_MAIN);
-    lv_obj_set_style_text_font(hint, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_value_lbl, &font_puhui_20_4, LV_PART_MAIN);
+    lv_label_set_long_mode(s_value_lbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_flex_grow(s_value_lbl, 1);
+    lv_obj_set_style_text_align(s_value_lbl, LV_TEXT_ALIGN_RIGHT, LV_PART_MAIN);
+
+    s_preview_clip = lv_obj_create(ctrl);
+    screen_strip_obj_chrome(s_preview_clip);
+    lv_obj_set_size(s_preview_clip, kPreviewW, kPreviewH);
+    lv_obj_set_style_bg_color(s_preview_clip, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_preview_clip, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_preview_clip, 6, LV_PART_MAIN);
+    lv_obj_set_style_clip_corner(s_preview_clip, true, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_preview_clip, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_preview_clip, lv_color_hex(kTestColorMuted),
+                                  LV_PART_MAIN);
+    lv_obj_remove_flag(s_preview_clip, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_preview_clip, LV_OBJ_FLAG_HIDDEN);
+    screen_swipe_back_ignore(s_preview_clip, true);
 }
 
-void OnLoad() {}
+void OnLoad() {
+    s_detect_done = false;
+    s_preview_started = false;
+    s_power_on_us = 0;
+    if (!StartCameraPower()) {
+        SetErrorText("上电失败");
+        s_detect_done = true;
+        return;
+    }
+    if (s_value_lbl != nullptr) {
+        lv_label_set_text(s_value_lbl, "初始化中...");
+        lv_obj_set_style_text_color(s_value_lbl, lv_color_hex(kTestColorTextDim),
+                                    LV_PART_MAIN);
+    }
+}
 
 void OnUnload() {
-    ClosePreviewDialog();
+    if (s_preview_started) {
+        CameraScreen::StopExternalPreview();
+        s_preview_started = false;
+    } else {
+        StopCameraPower();
+    }
+    s_value_lbl = nullptr;
     s_status_icon = nullptr;
+    s_preview_clip = nullptr;
+    s_preview_canvas = nullptr;
+    s_detect_done = false;
+    s_power_on_us = 0;
+}
+
+void Poll() {
+    if (s_detect_done || s_value_lbl == nullptr || !s_cam_powered) {
+        return;
+    }
+
+    const int64_t elapsed_ms =
+        (esp_timer_get_time() - s_power_on_us) / 1000;
+    if (elapsed_ms < kCamXclkSettleMs) {
+        return;
+    }
+
+    s_detect_done = TryDetectSensorId();
 }
 
 }  // namespace CameraTest
