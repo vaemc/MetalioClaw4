@@ -621,7 +621,11 @@ void EnsureIconPathsBuilt() {
 // ---------------------------------------------------------------------------
 
 constexpr int kHomeMoveThreshold = 5;       // 滑动激活 / 点击位移上限（|dx|、|dy| 均 < 此值才算 tap）
+constexpr int kHomeAxisLockThreshold = 12;  // 消抖：主方向位移超过此值才锁定手势
+constexpr int kPageSnapThreshold = kPanelSize / 5;  // 跟手拖动超过 20% 页宽即切页（720→144px）
+constexpr int kHomeFlickThreshold = 24;       // 松手快速 fling 位移阈值
 constexpr uint32_t kHomeLongPressMs = 750;  // 按下→松开 ≥ 此值且位移够小 → 长按
+constexpr uint32_t kPageSlideAnimMs = 300;  // 左右翻页吸附动画时长
 
 constexpr lv_obj_flag_t kAppCellFlag = LV_OBJ_FLAG_USER_2;
 
@@ -635,11 +639,20 @@ enum class HomeTouchKind {
     LongPress,
 };
 
+enum class HomeGestureAxis {
+    None,
+    Horizontal,
+    Vertical,
+};
+
 struct HomeTouchSession {
     bool active = false;
     bool consumed = false;  // 已由滑动手势消费
+    bool paging = false;      // 水平跟手拖动翻页中
+    HomeGestureAxis axis = HomeGestureAxis::None;
     int16_t start_x = 0;
     int16_t start_y = 0;
+    int16_t last_x = 0;       // 跟手拖动时的上一采样点
     uint32_t press_tick = 0;
     lv_obj_t* press_cell = nullptr;
     const AppEntry* app = nullptr;
@@ -730,6 +743,8 @@ void StartHomeIdleTimer() {
 // App 卡片按压过渡：确认点击/长按后触发缩放。
 constexpr int kCellRadius = 28;
 constexpr uint32_t kCellPressScaleMs = 200;  // 与 GetPressTransition 时长一致
+constexpr uint32_t kSkeletonBg = 0x2A2F3A;
+constexpr uint32_t kSkeletonHighlight = 0x3D4451;
 
 const lv_style_prop_t kPressTransProps[] = {
     LV_STYLE_TRANSFORM_SCALE_X,
@@ -810,6 +825,33 @@ lv_obj_t* FindAppCellFromTarget(lv_obj_t* target, lv_obj_t* screen) {
     return nullptr;
 }
 
+lv_obj_t* CreateAppCellSkeleton(lv_obj_t* cell) {
+    lv_obj_t* skeleton = lv_obj_create(cell);
+    lv_obj_remove_style_all(skeleton);
+    lv_obj_set_size(skeleton, kCellWidth, kCellHeight);
+    lv_obj_set_style_bg_color(skeleton, lv_color_hex(kSkeletonBg), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(skeleton, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_set_style_radius(skeleton, kCellRadius, LV_PART_MAIN);
+    lv_obj_set_style_border_width(skeleton, 0, LV_PART_MAIN);
+    lv_obj_align(skeleton, LV_ALIGN_TOP_LEFT, 0, 0);
+    lv_obj_remove_flag(skeleton, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(skeleton, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* shine = lv_obj_create(skeleton);
+    lv_obj_remove_style_all(shine);
+    lv_obj_set_size(shine, kCellWidth - 48, 28);
+    lv_obj_align(shine, LV_ALIGN_CENTER, 0, -8);
+    lv_obj_set_style_bg_color(shine, lv_color_hex(kSkeletonHighlight), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(shine, LV_OPA_50, LV_PART_MAIN);
+    lv_obj_set_style_radius(shine, 14, LV_PART_MAIN);
+    lv_obj_set_style_border_width(shine, 0, LV_PART_MAIN);
+    lv_obj_remove_flag(shine, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(shine, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_add_flag(skeleton, LV_OBJ_FLAG_HIDDEN);
+    return skeleton;
+}
+
 lv_obj_t* CreateAppCell(lv_obj_t* parent, const AppEntry& entry, int idx) {
     lv_obj_t* cell = lv_obj_create(parent);
     lv_obj_remove_style_all(cell);
@@ -837,6 +879,8 @@ lv_obj_t* CreateAppCell(lv_obj_t* parent, const AppEntry& entry, int idx) {
     lv_obj_set_size(icon, kCellWidth, kCellHeight);
     lv_obj_align(icon, LV_ALIGN_TOP_LEFT, 0, 0);
     lv_obj_remove_flag(icon, LV_OBJ_FLAG_CLICKABLE);
+
+    CreateAppCellSkeleton(cell);
 
     if (entry.launch != nullptr) {
         // 可命中以便 PRESSED 时锁定 app；不用 LV_EVENT_CLICKED，由 screen 分发。
@@ -868,6 +912,7 @@ struct PagerState {
     lv_obj_t* dots[kMaxPages];
     int page_count;
     int current_page;
+    bool skeleton_active = false;
 };
 
 // 记住用户上次停留在主屏的哪一页，便于从子页面返回时回到同一页。
@@ -895,6 +940,40 @@ struct HomeStatusState {
     std::string last_activation_text;  // 缓存验证码文案，避免每秒 invalidate
     bool last_activation_visible = false;
 };
+
+void SetPagerSkeletonMode(PagerState* state, bool active) {
+    if (state == nullptr || state->pager == nullptr ||
+        state->skeleton_active == active) {
+        return;
+    }
+    state->skeleton_active = active;
+    for (int p = 0; p < state->page_count; ++p) {
+        lv_obj_t* page = lv_obj_get_child(state->pager, p);
+        if (page == nullptr) {
+            continue;
+        }
+        const uint32_t cell_count = lv_obj_get_child_count(page);
+        for (uint32_t c = 0; c < cell_count; ++c) {
+            lv_obj_t* cell = lv_obj_get_child(page, c);
+            if (cell == nullptr || !lv_obj_has_flag(cell, kAppCellFlag)) {
+                continue;
+            }
+            lv_obj_t* icon = lv_obj_get_child(cell, 0);
+            lv_obj_t* skeleton = lv_obj_get_child(cell, 1);
+            if (icon == nullptr || skeleton == nullptr) {
+                continue;
+            }
+            if (active) {
+                lv_obj_remove_state(cell, LV_STATE_PRESSED);
+                lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_remove_flag(skeleton, LV_OBJ_FLAG_HIDDEN);
+            } else {
+                lv_obj_add_flag(skeleton, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_remove_flag(icon, LV_OBJ_FLAG_HIDDEN);
+            }
+        }
+    }
+}
 
 void UpdateHomeStatusBar(HomeStatusState* st);
 
@@ -1354,7 +1433,31 @@ void HighlightDot(PagerState* state, int page) {
     }
 }
 
-// 翻页：把 pager 直接跳到目标页（LV_ANIM_OFF 立刻定位，无过渡动画）。
+void OnPagerScrollBegin(lv_event_t* e) {
+    lv_anim_t* a = lv_event_get_scroll_anim(e);
+    if (a == nullptr) {
+        return;
+    }
+    lv_anim_set_duration(a, kPageSlideAnimMs);
+    lv_anim_set_path_cb(a, lv_anim_path_ease_out);
+}
+
+void OnPagerScrollEnd(lv_event_t* e) {
+    auto* state = static_cast<PagerState*>(lv_event_get_user_data(e));
+    if (state == nullptr || state->pager == nullptr) {
+        return;
+    }
+    // 跟手拖动时 scroll_by(LV_ANIM_OFF) 每帧都会触发 SCROLL_END，
+    // 不能在此处关骨架，否则手动拖时永远看不到骨架效果。
+    if (s_home_touch.active && s_home_touch.paging) {
+        return;
+    }
+    if (!lv_obj_is_scrolling(state->pager)) {
+        SetPagerSkeletonMode(state, false);
+    }
+}
+
+// 翻页：平滑滚动到目标页；跟手拖动松手后也会调用以吸附到最近页。
 void GoToPage(PagerState* state, int target_page) {
     if (state == nullptr || state->pager == nullptr) {
         return;
@@ -1362,13 +1465,44 @@ void GoToPage(PagerState* state, int target_page) {
     if (target_page < 0 || target_page >= state->page_count) {
         return;
     }
-    if (target_page == state->current_page) {
+    const int32_t target_x = target_page * kPanelSize;
+    const int32_t scroll_x = lv_obj_get_scroll_x(state->pager);
+    if (target_page == state->current_page && scroll_x == target_x) {
+        SetPagerSkeletonMode(state, false);
         return;
     }
-    lv_obj_scroll_to_x(state->pager, target_page * kPanelSize, LV_ANIM_OFF);
+    SetPagerSkeletonMode(state, true);
+    lv_obj_scroll_to_x(state->pager, target_x, LV_ANIM_ON);
     HighlightDot(state, target_page);
     s_last_home_page = target_page;
     ResetHomeIdleTimer();
+}
+
+void SnapPagerToNearestPage(PagerState* state, int release_dx) {
+    if (state == nullptr || state->pager == nullptr) {
+        return;
+    }
+    const int32_t scroll_x = lv_obj_get_scroll_x(state->pager);
+    const int anchor_x = state->current_page * kPanelSize;
+    const int delta = static_cast<int>(scroll_x) - anchor_x;
+
+    int target = state->current_page;
+    // 相对起始页对称判定：左滑 delta>0 进下一页，右滑 delta<0 回上一页。
+    if (delta > kPageSnapThreshold ||
+        (release_dx <= -kHomeFlickThreshold && delta > kHomeMoveThreshold)) {
+        target = state->current_page + 1;
+    } else if (delta < -kPageSnapThreshold ||
+               (release_dx >= kHomeFlickThreshold && delta < -kHomeMoveThreshold)) {
+        target = state->current_page - 1;
+    }
+
+    if (target < 0) {
+        target = 0;
+    }
+    if (target >= state->page_count) {
+        target = state->page_count - 1;
+    }
+    GoToPage(state, target);
 }
 
 // ---------------------------------------------------------------------------
@@ -1377,25 +1511,52 @@ void GoToPage(PagerState* state, int target_page) {
 //   |dx|、|dy| 均 < kHomeMoveThreshold：
 //     按下→松开 < kHomeLongPressMs → Click（缩放 + launch）
 //     按下→松开 ≥ kHomeLongPressMs → LongPress（仅缩放，预留）
-//   |dx| >= |dy| 且 peak >= kHomeMoveThreshold → 左右滑（PRESSING 或 RELEASED 翻页）
-//   |dx| <  |dy| 且 peak >= kHomeMoveThreshold → 上下滑（预留，无动作）
+//   |dx| >= |dy| 且主方向位移 >= kHomeAxisLockThreshold → 左右滑（PRESSING 跟手 / RELEASED 吸附）
+//   |dy| > |dx| 且主方向位移 >= kHomeAxisLockThreshold → 上下滑（忽略，不隐藏图标）
+//   方向未锁定前（消抖区）→ 不切换骨架、不跟手翻页
 // ---------------------------------------------------------------------------
+
+bool HomeTouchIsHorizontalSlide(int dx, int dy) {
+    const int adx = std::abs(dx);
+    const int ady = std::abs(dy);
+    return adx >= kHomeAxisLockThreshold && adx * 2 > ady * 3;
+}
+
+bool HomeTouchIsVerticalSlide(int dx, int dy) {
+    const int adx = std::abs(dx);
+    const int ady = std::abs(dy);
+    return ady >= kHomeAxisLockThreshold && ady * 2 > adx * 3;
+}
+
+void HomeTouchUpdateAxisLock(int dx, int dy) {
+    if (s_home_touch.axis != HomeGestureAxis::None) {
+        return;
+    }
+    if (HomeTouchIsHorizontalSlide(dx, dy)) {
+        s_home_touch.axis = HomeGestureAxis::Horizontal;
+        return;
+    }
+    if (HomeTouchIsVerticalSlide(dx, dy)) {
+        s_home_touch.axis = HomeGestureAxis::Vertical;
+        s_home_touch.consumed = true;
+    }
+}
 
 bool HomeTouchIsTapLike(int dx, int dy) {
     return std::abs(dx) < kHomeMoveThreshold && std::abs(dy) < kHomeMoveThreshold;
 }
 
 HomeTouchKind HomeTouchClassifySwipe(int dx, int dy) {
-    const int adx = std::abs(dx);
-    const int ady = std::abs(dy);
-    const int peak = std::max(adx, ady);
-    if (peak < kHomeMoveThreshold) {
+    if (HomeTouchIsTapLike(dx, dy)) {
         return HomeTouchKind::None;
     }
-    if (adx >= ady) {
+    if (HomeTouchIsHorizontalSlide(dx, dy)) {
         return dx < 0 ? HomeTouchKind::SwipeLeft : HomeTouchKind::SwipeRight;
     }
-    return dy < 0 ? HomeTouchKind::SwipeUp : HomeTouchKind::SwipeDown;
+    if (HomeTouchIsVerticalSlide(dx, dy)) {
+        return dy < 0 ? HomeTouchKind::SwipeUp : HomeTouchKind::SwipeDown;
+    }
+    return HomeTouchKind::None;
 }
 
 void HomeTouchHandleSwipe(PagerState* state, HomeTouchKind kind) {
@@ -1433,16 +1594,25 @@ void HomeTouchDispatchTapLike(HomeTouchKind kind) {
     }
 }
 
-void HomeTouchTrySwipeDuringPress(PagerState* state, int dx, int dy) {
-    if (s_home_touch.consumed) {
+void HomeTouchTryStartPageDrag(PagerState* state, int dx, int dy, int current_x) {
+    if (s_home_touch.axis != HomeGestureAxis::Horizontal) {
         return;
     }
-    const HomeTouchKind kind = HomeTouchClassifySwipe(dx, dy);
-    if (kind == HomeTouchKind::None) {
+    if (s_home_touch.consumed && !s_home_touch.paging) {
         return;
     }
-    s_home_touch.consumed = true;
-    HomeTouchHandleSwipe(state, kind);
+    if (!HomeTouchIsHorizontalSlide(dx, dy)) {
+        return;
+    }
+    if (!s_home_touch.paging) {
+        s_home_touch.paging = true;
+        s_home_touch.consumed = true;
+        if (state != nullptr && state->pager != nullptr) {
+            lv_obj_stop_scroll_anim(state->pager);
+            SetPagerSkeletonMode(state, true);
+        }
+        s_home_touch.last_x = static_cast<int16_t>(current_x);
+    }
 }
 
 void OnHomePressed(lv_event_t* e) {
@@ -1461,8 +1631,11 @@ void OnHomePressed(lv_event_t* e) {
 
     s_home_touch.active = true;
     s_home_touch.consumed = false;
+    s_home_touch.paging = false;
+    s_home_touch.axis = HomeGestureAxis::None;
     s_home_touch.start_x = static_cast<int16_t>(p.x);
     s_home_touch.start_y = static_cast<int16_t>(p.y);
+    s_home_touch.last_x = static_cast<int16_t>(p.x);
     s_home_touch.press_tick = lv_tick_get();
     s_home_touch.press_cell = cell;
     s_home_touch.app =
@@ -1473,7 +1646,7 @@ void OnHomePressed(lv_event_t* e) {
 }
 
 void OnHomePressing(lv_event_t* e) {
-    if (!s_home_touch.active || s_home_touch.consumed) {
+    if (!s_home_touch.active) {
         return;
     }
     auto* state = static_cast<PagerState*>(lv_event_get_user_data(e));
@@ -1488,7 +1661,29 @@ void OnHomePressing(lv_event_t* e) {
     if (!HomeTouchIsTapLike(dx, dy)) {
         ResetHomeIdleTimer();
     }
-    HomeTouchTrySwipeDuringPress(state, dx, dy);
+
+    HomeTouchUpdateAxisLock(dx, dy);
+
+    // 上下滑或消抖区：不隐藏图标、不跟手翻页。
+    if (s_home_touch.axis != HomeGestureAxis::Horizontal) {
+        return;
+    }
+
+    if (state != nullptr) {
+        SetPagerSkeletonMode(state, true);
+    }
+
+    if (!s_home_touch.consumed || s_home_touch.paging) {
+        HomeTouchTryStartPageDrag(state, dx, dy, p.x);
+    }
+
+    if (s_home_touch.paging && state != nullptr && state->pager != nullptr) {
+        const int delta_x = p.x - s_home_touch.last_x;
+        if (delta_x != 0) {
+            lv_obj_scroll_by(state->pager, delta_x, 0, LV_ANIM_OFF);
+        }
+        s_home_touch.last_x = static_cast<int16_t>(p.x);
+    }
 }
 
 void OnHomeReleased(lv_event_t* e) {
@@ -1498,17 +1693,21 @@ void OnHomeReleased(lv_event_t* e) {
 
     auto* state = static_cast<PagerState*>(lv_event_get_user_data(e));
 
-    if (!s_home_touch.consumed) {
-        lv_indev_t* indev = lv_event_get_indev(e);
-        int dx = 0;
-        int dy = 0;
-        if (indev != nullptr) {
-            lv_point_t p;
-            lv_indev_get_point(indev, &p);
-            dx = p.x - s_home_touch.start_x;
-            dy = p.y - s_home_touch.start_y;
-        }
+    lv_indev_t* indev = lv_event_get_indev(e);
+    int dx = 0;
+    int dy = 0;
+    if (indev != nullptr) {
+        lv_point_t p;
+        lv_indev_get_point(indev, &p);
+        dx = p.x - s_home_touch.start_x;
+        dy = p.y - s_home_touch.start_y;
+    }
 
+    if (s_home_touch.axis == HomeGestureAxis::Vertical) {
+        // 上下滑：不做任何处理，保持图标显示。
+    } else if (s_home_touch.paging && state != nullptr) {
+        SnapPagerToNearestPage(state, dx);
+    } else if (!s_home_touch.consumed) {
         const uint32_t elapsed = lv_tick_elaps(s_home_touch.press_tick);
         if (HomeTouchIsTapLike(dx, dy)) {
             const HomeTouchKind kind =
@@ -1523,8 +1722,20 @@ void OnHomeReleased(lv_event_t* e) {
         }
     }
 
+    // 未进入跟手翻页且未吸附动画时，若仍在当前页则恢复图标。
+    if (!s_home_touch.paging && state != nullptr && state->pager != nullptr &&
+        !lv_obj_is_scrolling(state->pager)) {
+        const int32_t scroll_x = lv_obj_get_scroll_x(state->pager);
+        const int32_t expected = state->current_page * kPanelSize;
+        if (scroll_x == expected) {
+            SetPagerSkeletonMode(state, false);
+        }
+    }
+
     s_home_touch.active = false;
     s_home_touch.consumed = false;
+    s_home_touch.paging = false;
+    s_home_touch.axis = HomeGestureAxis::None;
     s_home_touch.press_cell = nullptr;
     s_home_touch.app = nullptr;
 }
@@ -1946,10 +2157,11 @@ lv_obj_t* HomeScreen::Create() {
     auto* status = new HomeStatusState{};
     CreateStatusBar(screen, status);
 
-    // ----- Pager (无动画翻页容器) -----
-    // 关掉 LVGL 自带的横向 scroll-snap，避免拖动时出现「跟手 + 回弹」过渡。
-    // 翻页由 OnHomeGesture 监听水平手势后用 lv_obj_scroll_to_x(..., LV_ANIM_OFF)
-    // 直接定位到目标页，呈现「啪」一下切换的瞬时效果。
+    // ----- Pager（左右滑动翻页容器） -----
+    // 不开启 LVGL 原生 scrollable，避免与 screen 级触摸分发抢手势。
+    // 水平滑动时由 OnHomePressing 跟手拖动 pager；松手或快速 fling 时
+    // 通过 lv_obj_scroll_to_x(..., LV_ANIM_ON) 平滑吸附到目标页。
+    // 滑动期间隐藏 PNG 图标，改为轻量骨架块跟手移动，减轻卡顿。
     lv_obj_t* pager = lv_obj_create(screen);
     state->pager = pager;
     lv_obj_remove_style_all(pager);
@@ -1961,6 +2173,8 @@ lv_obj_t* HomeScreen::Create() {
     // Row flex；每页固定宽度并列排布，pager 的 scroll 偏移由我们手动控制。
     lv_obj_set_flex_flow(pager, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(pager, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_add_event_cb(pager, OnPagerScrollBegin, LV_EVENT_SCROLL_BEGIN, nullptr);
+    lv_obj_add_event_cb(pager, OnPagerScrollEnd, LV_EVENT_SCROLL_END, state);
 
     for (int p = 0; p < page_count; ++p) {
         CreatePage(pager, p, kTotalApps);

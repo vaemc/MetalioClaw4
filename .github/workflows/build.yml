@@ -131,3 +131,49 @@ jobs:
           fi
           echo "Compile check failed (build result: $RESULT)." >&2
           exit 1
+
+  publish-latest-release:
+    name: Publish Latest release
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare release artifact
+        id: artifact
+        shell: bash
+        run: |
+          if [[ ! -f full-xingzhi-ai-395.bin ]]; then
+            echo "full-xingzhi-ai-395.bin not found in repository" >&2
+            exit 1
+          fi
+          TIMESTAMP="$(TZ=Asia/Shanghai date +%Y%m%d_%H%M)"
+          ARTIFACT="Metalio_Claw4_Latest_${TIMESTAMP}.bin"
+          cp full-xingzhi-ai-395.bin "$ARTIFACT"
+          echo "path=$ARTIFACT" >> "$GITHUB_OUTPUT"
+
+      - name: Remove previous release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          RELEASE_ID="$(gh api "repos/${{ github.repository }}/releases/tags/latest" --jq '.id' 2>/dev/null || true)"
+          if [[ -z "$RELEASE_ID" || "$RELEASE_ID" == "null" ]]; then
+            echo "No existing Latest release, skip cleanup."
+            exit 0
+          fi
+          gh api "repos/${{ github.repository }}/releases/$RELEASE_ID/assets" --jq '.[].id' | while read -r asset_id; do
+            [[ -n "$asset_id" ]] || continue
+            gh api -X DELETE "repos/${{ github.repository }}/releases/assets/$asset_id"
+          done
+
+      - name: Upload to Latest release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest
+          files: ${{ steps.artifact.outputs.path }}
+          make_latest: true
