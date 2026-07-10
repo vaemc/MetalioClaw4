@@ -161,6 +161,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          PREVIOUS_NOTES=""
+          if gh release view latest --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            PREVIOUS_NOTES="$(gh release view latest --repo "${{ github.repository }}" \
+              --json body --jq -r '.body // ""')"
+          fi
+
           SUBJECT="$(git log -1 --pretty=%s)"
           BODY="$(git log -1 --pretty=%b)"
           TITLE="$SUBJECT"
@@ -181,6 +187,12 @@ jobs:
             echo ""
             if [[ -n "$BODY" ]]; then
               echo "$BODY"
+            fi
+            if [[ -n "$PREVIOUS_NOTES" ]]; then
+              echo ""
+              echo "---"
+              echo ""
+              echo "$PREVIOUS_NOTES"
             fi
           } > release_notes.md
 
