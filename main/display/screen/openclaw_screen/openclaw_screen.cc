@@ -132,6 +132,7 @@ lv_timer_t* s_auto_refresh_timer = nullptr;
 lv_obj_t* s_list_screen = nullptr;
 lv_obj_t* s_list_container = nullptr;
 lv_obj_t* s_list_hint = nullptr;
+lv_obj_t* s_list_clear_btn = nullptr;
 lv_timer_t* s_activation_guard_timer = nullptr;
 
 // 录音 task 句柄；UNLOAD 时用来等它退出。
@@ -259,6 +260,10 @@ void open_conversation_detail(const std::string& conversation_id,
                               const std::string& title);
 void rebuild_conv_list_locked(const std::vector<ConversationRecord>& records,
                               int total);
+void add_conv_list_row(lv_obj_t* parent, const char* title_text,
+                       const char* id_text, const char* actual_title,
+                       bool is_create);
+void update_list_actions_visible_locked(bool visible);
 
 // ---------------------------------------------------------------------------
 // 工具
@@ -685,6 +690,7 @@ struct DeviceStatusResult {
     bool ok = false;
     bool bridge_online = false;
     bool gateway_online = false;
+    std::string hint;
     std::string err;
 };
 
@@ -780,6 +786,11 @@ DeviceStatusResult fetch_device_status() {
             cJSON_GetObjectItemCaseSensitive(data, "gatewayOnline");
         r.bridge_online = cJSON_IsTrue(bridge);
         r.gateway_online = cJSON_IsTrue(gateway);
+        cJSON* hint = cJSON_GetObjectItemCaseSensitive(data, "hint");
+        if (cJSON_IsString(hint) && hint->valuestring != nullptr &&
+            hint->valuestring[0] != '\0') {
+            r.hint = hint->valuestring;
+        }
         r.ok = true;
     } else {
         r.err = "missing data";
@@ -920,6 +931,15 @@ std::string build_service_unavailable_message(bool bridge_online,
     return "";
 }
 
+std::string device_status_unavailable_message(
+    const DeviceStatusResult& status_res) {
+    if (!status_res.hint.empty()) {
+        return status_res.hint;
+    }
+    return build_service_unavailable_message(status_res.bridge_online,
+                                             status_res.gateway_online);
+}
+
 void execute_fetch_history(uint32_t session, bool /*update_status*/) {
     DeviceStatusResult status_res = fetch_device_status();
     std::vector<HistoryMessage> messages;
@@ -939,8 +959,7 @@ void execute_fetch_history(uint32_t session, bool /*update_status*/) {
         messages_ok = fetch_messages_body(conversation_id, messages_json,
                                           messages_err);
     } else if (status_res.ok) {
-        status_msg = build_service_unavailable_message(
-            status_res.bridge_online, status_res.gateway_online);
+        status_msg = device_status_unavailable_message(status_res);
     } else {
         status_msg = "检查在线状态失败: " + status_res.err;
     }
@@ -1399,7 +1418,7 @@ void trigger_fetch_conv_list() {
     s_worker_list_session.store(session, std::memory_order_relaxed);
 
     if (s_list_hint != nullptr) {
-        lv_label_set_text(s_list_hint, "正在加载会话…");
+        lv_label_set_text(s_list_hint, "正在检查龙虾状态…");
         lv_obj_remove_flag(s_list_hint, LV_OBJ_FLAG_HIDDEN);
     }
 
@@ -1413,24 +1432,69 @@ void trigger_fetch_conv_list() {
 }
 
 void execute_fetch_conv_list(uint32_t session) {
-    ConversationListFetchResult res = fetch_conversation_records();
+    DeviceStatusResult status_res = fetch_device_status();
+
+    ConversationListFetchResult list_res;
+    std::string status_msg;
+    bool service_ok = false;
+
+    if (!status_res.ok) {
+        status_msg = "检查在线状态失败: " + status_res.err;
+    } else if (!status_res.bridge_online || !status_res.gateway_online) {
+        status_msg = device_status_unavailable_message(status_res);
+    } else {
+        service_ok = true;
+        list_res = fetch_conversation_records();
+    }
+
     s_list_loading.store(false);
 
     if (session != s_list_session.load(std::memory_order_relaxed)) {
         return;
     }
 
+    s_service_available.store(service_ok);
+
     if (esp_lv_adapter_lock(-1) != ESP_OK) {
         return;
     }
     if (is_list_screen_alive()) {
-        if (res.ok) {
-            rebuild_conv_list_locked(res.records, res.total);
-        } else if (s_list_hint != nullptr) {
-            char buf[96];
-            std::snprintf(buf, sizeof(buf), "加载失败: %s", res.err.c_str());
-            lv_label_set_text(s_list_hint, buf);
-            lv_obj_remove_flag(s_list_hint, LV_OBJ_FLAG_HIDDEN);
+        if (service_ok && list_res.ok) {
+            update_list_actions_visible_locked(true);
+            rebuild_conv_list_locked(list_res.records, list_res.total);
+        } else {
+            update_list_actions_visible_locked(service_ok);
+            if (s_list_container != nullptr) {
+                lv_obj_clean(s_list_container);
+                if (service_ok) {
+                    add_conv_list_row(s_list_container, "创建会话", nullptr,
+                                      nullptr, true);
+                }
+            }
+            if (s_list_hint != nullptr) {
+                if (!status_msg.empty()) {
+                    lv_label_set_text(s_list_hint, status_msg.c_str());
+                    lv_obj_set_style_text_color(s_list_hint,
+                                                lv_color_hex(kColorErrorText),
+                                                LV_PART_MAIN);
+                } else {
+                    char buf[96];
+                    std::snprintf(buf, sizeof(buf), "加载失败: %s",
+                                  list_res.err.c_str());
+                    lv_label_set_text(s_list_hint, buf);
+                    lv_obj_set_style_text_color(s_list_hint,
+                                                lv_color_hex(kColorErrorText),
+                                                LV_PART_MAIN);
+                }
+                lv_obj_remove_flag(s_list_hint, LV_OBJ_FLAG_HIDDEN);
+            }
+            if (!status_msg.empty()) {
+                ESP_LOGW(TAG, "conversation list skipped: %s",
+                         status_msg.c_str());
+            } else {
+                ESP_LOGW(TAG, "fetch conversation list failed: %s",
+                         list_res.err.c_str());
+            }
         }
     }
     esp_lv_adapter_unlock();
@@ -1578,11 +1642,23 @@ void add_conv_total_hint(lv_obj_t* parent, int total) {
     screen_make_input_passive(hint);
 }
 
+void update_list_actions_visible_locked(bool visible) {
+    if (s_list_clear_btn == nullptr) {
+        return;
+    }
+    if (visible) {
+        lv_obj_remove_flag(s_list_clear_btn, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_list_clear_btn, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void rebuild_conv_list_locked(const std::vector<ConversationRecord>& records,
                               int total) {
     if (s_list_container == nullptr) {
         return;
     }
+    update_list_actions_visible_locked(true);
     lv_obj_clean(s_list_container);
 
     add_conv_list_row(s_list_container, "创建会话", nullptr, nullptr, true);
@@ -1968,6 +2044,9 @@ void on_list_clear_clicked(lv_event_t* /*e*/) {
     if (s_activation_blocked) {
         return;
     }
+    if (!s_service_available.load()) {
+        return;
+    }
     open_clear_confirm_dialog(ClearDialogMode::RemoveAll);
 }
 
@@ -2177,6 +2256,7 @@ void on_list_screen_unloaded(lv_event_t* /*e*/) {
     s_list_screen = nullptr;
     s_list_container = nullptr;
     s_list_hint = nullptr;
+    s_list_clear_btn = nullptr;
 
     if (!s_navigating_within_openclaw.exchange(false, std::memory_order_acq_rel)) {
         stop_openclaw_worker();
@@ -2273,6 +2353,7 @@ void build_list_header(lv_obj_t* parent) {
     constexpr int32_t kHdrRightPad = 12;
 
     lv_obj_t* clear = lv_button_create(header);
+    s_list_clear_btn = clear;
     lv_obj_set_size(clear, kHdrBtnW, kHdrBtnH);
     lv_obj_align(clear, LV_ALIGN_RIGHT_MID, -kHdrRightPad, 0);
     style_header_btn(clear);
@@ -2302,7 +2383,7 @@ void build_list_body(lv_obj_t* parent) {
                           LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     s_list_hint = lv_label_create(parent);
-    lv_label_set_text(s_list_hint, "正在加载会话…");
+    lv_label_set_text(s_list_hint, "正在检查龙虾状态…");
     lv_obj_set_width(s_list_hint, kPanelW * 80 / 100);
     lv_label_set_long_mode(s_list_hint, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_align(s_list_hint, LV_TEXT_ALIGN_CENTER,

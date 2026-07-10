@@ -7,6 +7,7 @@
 // BluetoothScreen
 //
 // 蓝牙音频模块 AT 命令控制界面，通过 SimpleUart 与 BT 芯片通信。
+// 现嵌入设置页「蓝牙」Tab 使用（BuildInto），面向外置音频解码芯片，非 ESP32-C5 内置蓝牙。
 // 封装协议中的三种模式：
 //   模式1: AT+RX=2 -> AT+MODE=1  (接收模式)
 //   模式2: AT+TX=1 -> AT+MODE=2  (发射/配对模式，含扫描与连接)
@@ -14,7 +15,9 @@
 // ---------------------------------------------------------------------------
 class BluetoothScreen {
 public:
-    static lv_obj_t* Create();
+    // 将蓝牙控制 UI 嵌入到设置页等父容器中（不含独立 header / 返回）。
+    static void BuildInto(lv_obj_t* parent);
+    static void ResetUi();
     static void LifecycleCallback(screen_lifecycle_event_t event);
 
     // 设备开机时调用：向 BT 模块发送 `AT+RX=2 / AT+MODE=1` 把它切到接收

@@ -155,30 +155,66 @@ jobs:
           cp full-xingzhi-ai-395.bin "$ARTIFACT"
           echo "path=$ARTIFACT" >> "$GITHUB_OUTPUT"
 
-      - name: Remove previous release assets
+      - name: Prepare release notes from merge commit
+        id: notes
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          if ! gh release view latest --repo "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "No existing Latest release, skip cleanup."
-            exit 0
+          PREVIOUS_NOTES=""
+          if gh release view latest --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            PREVIOUS_NOTES="$(gh release view latest --repo "${{ github.repository }}" \
+              --json body | jq -r '.body // ""')"
           fi
 
-          mapfile -t asset_ids < <(gh release view latest --repo "${{ github.repository }}" --json assets --jq '.assets[].id')
-          if [[ ${#asset_ids[@]} -eq 0 ]]; then
-            echo "No assets to remove."
-            exit 0
+          SUBJECT="$(git log -1 --pretty=%s)"
+          BODY="$(git log -1 --pretty=%b)"
+          TITLE="$SUBJECT"
+
+          # merge commit：标题用 PR title，描述优先用合并对话框填写的 commit body
+          if [[ "$SUBJECT" == Merge\ pull\ request* ]]; then
+            PR_JSON="$(gh api "repos/${{ github.repository }}/commits/${{ github.sha }}/pulls" --jq '.[0] // empty' 2>/dev/null || true)"
+            if [[ -n "$PR_JSON" && "$PR_JSON" != "null" ]]; then
+              TITLE="$(echo "$PR_JSON" | jq -r '.title')"
+              if [[ -z "$BODY" ]]; then
+                BODY="$(echo "$PR_JSON" | jq -r '.body // ""')"
+              fi
+            fi
           fi
 
-          for asset_id in "${asset_ids[@]}"; do
-            gh api -X DELETE "repos/${{ github.repository }}/releases/assets/$asset_id"
-          done
+          {
+            echo "## ${TITLE}"
+            echo ""
+            if [[ -n "$BODY" ]]; then
+              echo "$BODY"
+            fi
+            if [[ -n "$PREVIOUS_NOTES" ]]; then
+              echo ""
+              echo "---"
+              echo ""
+              echo "$PREVIOUS_NOTES"
+            fi
+          } > release_notes.md
 
-      - name: Upload to Latest release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: Latest
-          files: ${{ steps.artifact.outputs.path }}
-          make_latest: true
+          echo "Release notes:"
+          cat release_notes.md
+
+      - name: Recreate Latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view latest --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Deleting existing latest release and tag..."
+            gh release delete latest --repo "${{ github.repository }}" -y --cleanup-tag
+          else
+            echo "No existing latest release."
+          fi
+
+          echo "Creating latest release with ${{ steps.artifact.outputs.path }}..."
+          gh release create latest "${{ steps.artifact.outputs.path }}" \
+            --repo "${{ github.repository }}" \
+            --title "Latest" \
+            --notes-file release_notes.md \
+            --latest \
+            --target "${{ github.sha }}"

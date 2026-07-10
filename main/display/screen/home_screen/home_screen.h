@@ -12,4 +12,8 @@ public:
     static void RefreshStatusBar();
     // 下次进入主屏时从第一页开始（用于主题切换等场景）。
     static void ResetToFirstPage();
+
+    // 主屏无操作自动关机时长（分钟），0 表示关闭。默认 5 分钟。
+    static int GetIdleShutdownMinutes();
+    static void SetIdleShutdownMinutes(int minutes);
 };

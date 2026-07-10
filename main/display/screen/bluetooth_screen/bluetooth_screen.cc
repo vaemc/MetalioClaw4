@@ -2,7 +2,6 @@
 
 #include "IOExpander.hpp"
 #include "SimpleUart.hpp"
-#include "home_screen/home_screen.h"
 #include "screen_util.h"
 
 #include <cstdio>
@@ -15,17 +14,13 @@
 #include "freertos/task.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
-LV_FONT_DECLARE(font_puhui_30_4);
 
 namespace {
 
 constexpr const char* TAG = "BtScreen";
 
-constexpr int kPanelW = 720;
-constexpr int kPanelH = 720;
 constexpr int kAddrHexLen = 12;
 
-constexpr uint32_t kColorBg         = 0x0E1116;
 constexpr uint32_t kColorCard       = 0x1B2030;
 constexpr uint32_t kColorBtn        = 0x2A2F3A;
 constexpr uint32_t kColorBtnActive  = 0x3B82F6;
@@ -55,7 +50,7 @@ struct BtDevice {
 };
 
 struct UiState {
-    lv_obj_t* screen           = nullptr;
+    lv_obj_t* root               = nullptr;
     lv_obj_t* status_label     = nullptr;
     lv_obj_t* mode_btns[3]     = {};
     lv_obj_t* mode1_panel      = nullptr;
@@ -548,253 +543,7 @@ void on_music_mode_clicked(lv_event_t* /*e*/) {
     xTaskCreate(music_mode_task, "bt_music_mode", 4096, nullptr, 5, nullptr);
 }
 
-void OnSwipeBack() {
-    lv_indev_t* indev = lv_indev_active();
-    if (indev != nullptr) {
-        lv_indev_wait_release(indev);
-    }
-    lv_obj_t* old_scr = lv_screen_active();
-    lv_obj_t* home    = HomeScreen::Create();
-    lv_screen_load(home);
-    if (old_scr != nullptr && old_scr != home) {
-        lv_obj_delete_async(old_scr);
-    }
-}
-
-void on_back_clicked(lv_event_t* /*e*/) { OnSwipeBack(); }
-
-void on_screen_unloaded(lv_event_t* /*e*/) {
-    s_screen_active = false;
-    s_ui.screen          = nullptr;
-    s_ui.status_label    = nullptr;
-    s_ui.mode1_panel     = nullptr;
-    s_ui.mode2_panel     = nullptr;
-    s_ui.scan_btn        = nullptr;
-    s_ui.device_list     = nullptr;
-    s_ui.music_btn       = nullptr;
-    s_ui.call_btn        = nullptr;
-    for (int i = 0; i < 3; ++i) {
-        s_ui.mode_btns[i] = nullptr;
-    }
-    s_rx_buffer.clear();
-    s_devices.clear();
-    // 注意：不要把 s_active_mode 清回 kNone —— 屏幕卸载并不会改变 BT
-    // 硬件的实际模式。下次进入页面时我们要根据它正确还原 UI（开机时已经
-    // 由 ApplyDefaultMode() 切到 kMode1，第一次进入应该看到模式1激活）。
-    // 只在 bt_reset_task 那种 "硬件真的复位了" 的路径上清。
-    s_conn_state  = ConnState::kIdle;
-}
-
-lv_obj_t* make_mode_button(lv_obj_t* parent, const char* label, int idx,
-                           int x, int y, int w, int h) {
-    lv_obj_t* btn = lv_button_create(parent);
-    lv_obj_set_pos(btn, x, y);
-    lv_obj_set_size(btn, w, h);
-    lv_obj_set_style_radius(btn, 20, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(kColorBtn), LV_PART_MAIN);
-    lv_obj_add_event_cb(btn, on_mode_btn_clicked, LV_EVENT_CLICKED,
-                        reinterpret_cast<void*>(static_cast<intptr_t>(idx)));
-
-    lv_obj_t* lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, label);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(kColorText), LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(lbl);
-    return btn;
-}
-
-}  // namespace
-
-lv_obj_t* BluetoothScreen::Create() {
-    // s_active_mode 保留先前值（开机 ApplyDefaultMode() 已经把它写成
-    // kMode1；重置蓝牙后会被清成 kNone）。这样首次进入页面就能反映出
-    // 设备当前实际模式，无需用户手动再点一次。
-    s_conn_state    = ConnState::kIdle;
-    s_screen_active = true;
-    s_rx_buffer.clear();
-    s_devices.clear();
-
-    lv_obj_t* scr = lv_obj_create(nullptr);
-    s_ui.screen   = scr;
-    screen_strip_obj_chrome(scr);
-    lv_obj_set_size(scr, kPanelW, kPanelH);
-    lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* header = lv_obj_create(scr);
-    screen_strip_obj_chrome(header);
-    lv_obj_set_size(header, kPanelW, 90);
-    lv_obj_set_pos(header, 0, 0);
-    lv_obj_set_style_bg_opa(header, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_remove_flag(header, LV_OBJ_FLAG_SCROLLABLE);
-
-    // 左上角返回按钮：透明圆形按钮 + "←" 图标，按下时白色半透明叠加
-    constexpr int kBackBtnSize = 72;
-    lv_obj_t* back = lv_button_create(header);
-    lv_obj_remove_style_all(back);
-    lv_obj_set_size(back, kBackBtnSize, kBackBtnSize);
-    lv_obj_align(back, LV_ALIGN_LEFT_MID, 16, 0);
-    lv_obj_set_style_bg_opa(back, LV_OPA_TRANSP, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(back, lv_color_hex(0xFFFFFF),
-                              LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_bg_opa(back, LV_OPA_20, LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_radius(back, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(back, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(back, on_back_clicked, LV_EVENT_CLICKED, nullptr);
-    screen_swipe_back_ignore(back, true);
-
-    lv_obj_t* back_icon = lv_image_create(back);
-    lv_image_set_src(back_icon, "A:ic_app_back.spng");
-    lv_obj_remove_flag(back_icon, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_center(back_icon);
-
-    lv_obj_t* title = lv_label_create(header);
-    lv_label_set_text(title, "蓝牙配置");
-    lv_obj_set_style_text_color(title, lv_color_hex(kColorText), LV_PART_MAIN);
-    lv_obj_set_style_text_font(title, &font_puhui_30_4, LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_LEFT_MID, 16 + kBackBtnSize + 16, 0);
-
-    lv_obj_t* reset = lv_button_create(header);
-    lv_obj_set_size(reset, 160, 60);
-    lv_obj_align(reset, LV_ALIGN_RIGHT_MID, -20, 0);
-    lv_obj_set_style_radius(reset, 30, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(reset, lv_color_hex(0xC4761A), LV_PART_MAIN);
-    lv_obj_add_event_cb(reset, on_reset_bt_clicked, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* reset_lbl = lv_label_create(reset);
-    lv_label_set_text(reset_lbl, "复位蓝牙");
-    lv_obj_set_style_text_color(reset_lbl, lv_color_white(), LV_PART_MAIN);
-    lv_obj_set_style_text_font(reset_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(reset_lbl);
-
-    // 提示：复位蓝牙是烧录蓝牙固件时才用的高危操作，挪到按钮左侧避免误点
-    lv_obj_t* reset_hint = lv_label_create(header);
-    lv_label_set_text(reset_hint, "烧录蓝牙固件时使用");
-    lv_obj_set_style_text_color(reset_hint, lv_color_hex(kColorSubtle),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(reset_hint, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_align_to(reset_hint, reset, LV_ALIGN_OUT_LEFT_MID, -12, 0);
-
-    constexpr int kModeBtnW = 200;
-    constexpr int kModeBtnH = 64;
-    constexpr int kModeGap  = 20;
-    constexpr int kModeTop  = 110;
-    const int kModeTotalW = 3 * kModeBtnW + 2 * kModeGap;
-    const int kModeStartX = (kPanelW - kModeTotalW) / 2;
-
-    const char* mode_labels[] = {"模式1", "模式2", "模式3"};
-    for (int i = 0; i < 3; ++i) {
-        s_ui.mode_btns[i] = make_mode_button(
-            scr, mode_labels[i], i,
-            kModeStartX + i * (kModeBtnW + kModeGap), kModeTop,
-            kModeBtnW, kModeBtnH);
-    }
-
-    lv_obj_t* status = lv_label_create(scr);
-    s_ui.status_label = status;
-    lv_label_set_text(status, "请选择蓝牙模式");
-    lv_obj_set_style_text_color(status, lv_color_hex(kColorSubtle),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(status, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_set_width(status, kPanelW - 60);
-    lv_label_set_long_mode(status, LV_LABEL_LONG_WRAP);
-    lv_obj_align(status, LV_ALIGN_TOP_MID, 0, 190);
-
-    // ---- 模式1 面板：仅状态提示 ----
-    lv_obj_t* m1_panel = lv_obj_create(scr);
-    s_ui.mode1_panel = m1_panel;
-    screen_strip_obj_chrome(m1_panel);
-    lv_obj_set_size(m1_panel, kPanelW - 40, 160);
-    lv_obj_set_pos(m1_panel, 20, 250);
-    lv_obj_set_style_bg_color(m1_panel, lv_color_hex(kColorCard), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(m1_panel, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(m1_panel, 24, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(m1_panel, 20, LV_PART_MAIN);
-    lv_obj_add_flag(m1_panel, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_remove_flag(m1_panel, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* m1_hint = lv_label_create(m1_panel);
-    lv_label_set_text(m1_hint, "模式1 已激活\n(AT+RX=2 / AT+MODE=1)");
-    lv_obj_set_style_text_color(m1_hint, lv_color_hex(kColorSubtle),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(m1_hint, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(m1_hint);
-
-    // ---- 模式2 面板：扫描 + 设备列表 + 音乐/通话模式 ----
-    lv_obj_t* panel = lv_obj_create(scr);
-    s_ui.mode2_panel = panel;
-    screen_strip_obj_chrome(panel);
-    lv_obj_set_size(panel, kPanelW - 40, 420);
-    lv_obj_set_pos(panel, 20, 250);
-    lv_obj_set_style_bg_color(panel, lv_color_hex(kColorCard), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(panel, 24, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(panel, 16, LV_PART_MAIN);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t* scan = lv_button_create(panel);
-    s_ui.scan_btn = scan;
-    lv_obj_set_size(scan, 220, 56);
-    lv_obj_align(scan, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_style_radius(scan, 16, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(scan, lv_color_hex(kColorBtnActive),
-                              LV_PART_MAIN);
-    lv_obj_add_event_cb(scan, on_scan_clicked, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* scan_lbl = lv_label_create(scan);
-    lv_label_set_text(scan_lbl, "扫描设备");
-    lv_obj_set_style_text_color(scan_lbl, lv_color_hex(kColorText),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(scan_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(scan_lbl);
-
-    lv_obj_t* list = lv_obj_create(panel);
-    s_ui.device_list = list;
-    screen_strip_obj_chrome(list);
-    lv_obj_set_size(list, LV_PCT(100), 240);
-    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 70);
-    lv_obj_set_style_bg_color(list, lv_color_hex(0x12151C), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_radius(list, 16, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(list, 8, LV_PART_MAIN);
-    lv_obj_set_style_pad_row(list, 8, LV_PART_MAIN);
-    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START);
-    lv_obj_set_scroll_dir(list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
-
-    lv_obj_t* music = lv_button_create(panel);
-    s_ui.music_btn = music;
-    lv_obj_set_size(music, 280, 56);
-    lv_obj_align(music, LV_ALIGN_BOTTOM_LEFT, 0, 0);
-    lv_obj_set_style_radius(music, 16, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(music, lv_color_hex(kColorBtn), LV_PART_MAIN);
-    lv_obj_add_event_cb(music, on_music_mode_clicked, LV_EVENT_CLICKED,
-                        nullptr);
-    lv_obj_t* music_lbl = lv_label_create(music);
-    lv_label_set_text(music_lbl, "音乐模式");
-    lv_obj_set_style_text_color(music_lbl, lv_color_hex(kColorText),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(music_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(music_lbl);
-
-    lv_obj_t* call = lv_button_create(panel);
-    s_ui.call_btn = call;
-    lv_obj_set_size(call, 280, 56);
-    lv_obj_align(call, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
-    lv_obj_set_style_radius(call, 16, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(call, lv_color_hex(kColorBtn), LV_PART_MAIN);
-    lv_obj_add_event_cb(call, on_call_mode_clicked, LV_EVENT_CLICKED, nullptr);
-    lv_obj_t* call_lbl = lv_label_create(call);
-    lv_label_set_text(call_lbl, "通话模式");
-    lv_obj_set_style_text_color(call_lbl, lv_color_hex(kColorText),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(call_lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(call_lbl);
-
-    // 按当前 s_active_mode 还原 UI。开机时 ApplyDefaultMode() 已经把硬件
-    // 切到 kMode1 并写好 s_active_mode；用户首次进入页面就能看到 "模式1
-    // 已激活" 而不是 "请选择蓝牙模式"。
+void restore_mode_ui() {
     refresh_mode_buttons();
     switch (s_active_mode) {
         case BtMode::kMode1:
@@ -817,12 +566,227 @@ lv_obj_t* BluetoothScreen::Create() {
             show_mode2_panel(false);
             break;
     }
+}
 
-    screen_attach_swipe_back(scr, OnSwipeBack);
-    lv_obj_add_event_cb(scr, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
+void reset_ui_state() {
+    s_ui.root          = nullptr;
+    s_ui.status_label    = nullptr;
+    s_ui.mode1_panel     = nullptr;
+    s_ui.mode2_panel     = nullptr;
+    s_ui.scan_btn        = nullptr;
+    s_ui.device_list     = nullptr;
+    s_ui.music_btn       = nullptr;
+    s_ui.call_btn        = nullptr;
+    for (int i = 0; i < 3; ++i) {
+        s_ui.mode_btns[i] = nullptr;
+    }
+    s_rx_buffer.clear();
+    s_devices.clear();
+    s_conn_state = ConnState::kIdle;
+}
+
+lv_obj_t* make_mode_button(lv_obj_t* parent, const char* label, int idx) {
+    lv_obj_t* btn = lv_button_create(parent);
+    lv_obj_set_height(btn, 56);
+    lv_obj_set_flex_grow(btn, 1);
+    lv_obj_set_style_radius(btn, 16, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(btn, lv_color_hex(kColorBtn), LV_PART_MAIN);
+    lv_obj_add_event_cb(btn, on_mode_btn_clicked, LV_EVENT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<intptr_t>(idx)));
+    screen_swipe_back_ignore(btn, true);
+
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, label);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(kColorText), LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_center(lbl);
+    return btn;
+}
+
+}  // namespace
+
+void BluetoothScreen::BuildInto(lv_obj_t* parent) {
+    s_conn_state = ConnState::kIdle;
+    s_rx_buffer.clear();
+    s_devices.clear();
+    s_ui.root = parent;
+
+    lv_obj_set_style_pad_all(parent, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(parent, 10, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(parent, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_flex_flow(parent, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(parent, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_scroll_dir(parent, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(parent, LV_SCROLLBAR_MODE_AUTO);
+
+    lv_obj_t* desc = lv_label_create(parent);
+    lv_label_set_text(desc,
+                      "以下设置用于外置蓝牙音频解码芯片，非 ESP32-C5 内置蓝牙");
+    lv_obj_set_width(desc, LV_PCT(100));
+    lv_label_set_long_mode(desc, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_color(desc, lv_color_hex(kColorSubtle), LV_PART_MAIN);
+    lv_obj_set_style_text_font(desc, &font_puhui_20_4, LV_PART_MAIN);
+
+    lv_obj_t* reset_row = lv_obj_create(parent);
+    lv_obj_remove_style_all(reset_row);
+    lv_obj_set_width(reset_row, LV_PCT(100));
+    lv_obj_set_height(reset_row, LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(reset_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(reset_row, LV_FLEX_ALIGN_SPACE_BETWEEN,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_remove_flag(reset_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* reset_hint = lv_label_create(reset_row);
+    lv_label_set_text(reset_hint, "烧录蓝牙固件时使用");
+    lv_obj_set_style_text_color(reset_hint, lv_color_hex(kColorSubtle),
+                                LV_PART_MAIN);
+    lv_obj_set_style_text_font(reset_hint, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_set_flex_grow(reset_hint, 1);
+
+    lv_obj_t* reset = lv_button_create(reset_row);
+    lv_obj_set_size(reset, 140, 48);
+    lv_obj_set_style_radius(reset, 24, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(reset, lv_color_hex(0xC4761A), LV_PART_MAIN);
+    lv_obj_add_event_cb(reset, on_reset_bt_clicked, LV_EVENT_CLICKED, nullptr);
+    screen_swipe_back_ignore(reset, true);
+    lv_obj_t* reset_lbl = lv_label_create(reset);
+    lv_label_set_text(reset_lbl, "复位蓝牙");
+    lv_obj_set_style_text_color(reset_lbl, lv_color_white(), LV_PART_MAIN);
+    lv_obj_set_style_text_font(reset_lbl, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_center(reset_lbl);
+
+    lv_obj_t* mode_row = lv_obj_create(parent);
+    lv_obj_remove_style_all(mode_row);
+    lv_obj_set_width(mode_row, LV_PCT(100));
+    lv_obj_set_height(mode_row, 56);
+    lv_obj_set_flex_flow(mode_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(mode_row, 10, LV_PART_MAIN);
+    lv_obj_remove_flag(mode_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    const char* mode_labels[] = {"模式1", "模式2", "模式3"};
+    for (int i = 0; i < 3; ++i) {
+        s_ui.mode_btns[i] = make_mode_button(mode_row, mode_labels[i], i);
+    }
+
+    lv_obj_t* status = lv_label_create(parent);
+    s_ui.status_label = status;
+    lv_label_set_text(status, "请选择蓝牙模式");
+    lv_obj_set_style_text_color(status, lv_color_hex(kColorSubtle),
+                                LV_PART_MAIN);
+    lv_obj_set_style_text_font(status, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_set_width(status, LV_PCT(100));
+    lv_label_set_long_mode(status, LV_LABEL_LONG_WRAP);
+
+    lv_obj_t* m1_panel = lv_obj_create(parent);
+    s_ui.mode1_panel = m1_panel;
+    screen_strip_obj_chrome(m1_panel);
+    lv_obj_set_width(m1_panel, LV_PCT(100));
+    lv_obj_set_height(m1_panel, 120);
+    lv_obj_set_style_bg_color(m1_panel, lv_color_hex(kColorCard), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(m1_panel, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(m1_panel, 20, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(m1_panel, 16, LV_PART_MAIN);
+    lv_obj_add_flag(m1_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(m1_panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* m1_hint = lv_label_create(m1_panel);
+    lv_label_set_text(m1_hint, "模式1 已激活\n(AT+RX=2 / AT+MODE=1)");
+    lv_obj_set_style_text_color(m1_hint, lv_color_hex(kColorSubtle),
+                                LV_PART_MAIN);
+    lv_obj_set_style_text_font(m1_hint, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_center(m1_hint);
+
+    lv_obj_t* panel = lv_obj_create(parent);
+    s_ui.mode2_panel = panel;
+    screen_strip_obj_chrome(panel);
+    lv_obj_set_width(panel, LV_PCT(100));
+    lv_obj_set_height(panel, 360);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(kColorCard), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(panel, 20, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(panel, 12, LV_PART_MAIN);
+    lv_obj_add_flag(panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* scan = lv_button_create(panel);
+    s_ui.scan_btn = scan;
+    lv_obj_set_size(scan, 180, 48);
+    lv_obj_align(scan, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_radius(scan, 16, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scan, lv_color_hex(kColorBtnActive),
+                              LV_PART_MAIN);
+    lv_obj_add_event_cb(scan, on_scan_clicked, LV_EVENT_CLICKED, nullptr);
+    screen_swipe_back_ignore(scan, true);
+    lv_obj_t* scan_lbl = lv_label_create(scan);
+    lv_label_set_text(scan_lbl, "扫描设备");
+    lv_obj_set_style_text_color(scan_lbl, lv_color_hex(kColorText),
+                                LV_PART_MAIN);
+    lv_obj_set_style_text_font(scan_lbl, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_center(scan_lbl);
+
+    lv_obj_t* list = lv_obj_create(panel);
+    s_ui.device_list = list;
+    screen_strip_obj_chrome(list);
+    lv_obj_set_size(list, LV_PCT(100), 200);
+    lv_obj_align(list, LV_ALIGN_TOP_MID, 0, 58);
+    lv_obj_set_style_bg_color(list, lv_color_hex(0x12151C), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(list, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(list, 16, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(list, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(list, 8, LV_PART_MAIN);
+    lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_START);
+    lv_obj_set_scroll_dir(list, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
+    screen_swipe_back_ignore(list, true);
+
+    lv_obj_t* btn_row = lv_obj_create(panel);
+    lv_obj_remove_style_all(btn_row);
+    lv_obj_set_width(btn_row, LV_PCT(100));
+    lv_obj_set_height(btn_row, 48);
+    lv_obj_align(btn_row, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_flex_flow(btn_row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(btn_row, 12, LV_PART_MAIN);
+    lv_obj_remove_flag(btn_row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* music = lv_button_create(btn_row);
+    s_ui.music_btn = music;
+    lv_obj_set_height(music, 48);
+    lv_obj_set_flex_grow(music, 1);
+    lv_obj_set_style_radius(music, 16, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(music, lv_color_hex(kColorBtn), LV_PART_MAIN);
+    lv_obj_add_event_cb(music, on_music_mode_clicked, LV_EVENT_CLICKED,
                         nullptr);
+    screen_swipe_back_ignore(music, true);
+    lv_obj_t* music_lbl = lv_label_create(music);
+    lv_label_set_text(music_lbl, "音乐模式");
+    lv_obj_set_style_text_color(music_lbl, lv_color_hex(kColorText),
+                                LV_PART_MAIN);
+    lv_obj_set_style_text_font(music_lbl, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_center(music_lbl);
 
-    return scr;
+    lv_obj_t* call = lv_button_create(btn_row);
+    s_ui.call_btn = call;
+    lv_obj_set_height(call, 48);
+    lv_obj_set_flex_grow(call, 1);
+    lv_obj_set_style_radius(call, 16, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(call, lv_color_hex(kColorBtn), LV_PART_MAIN);
+    lv_obj_add_event_cb(call, on_call_mode_clicked, LV_EVENT_CLICKED, nullptr);
+    screen_swipe_back_ignore(call, true);
+    lv_obj_t* call_lbl = lv_label_create(call);
+    lv_label_set_text(call_lbl, "通话模式");
+    lv_obj_set_style_text_color(call_lbl, lv_color_hex(kColorText),
+                                LV_PART_MAIN);
+    lv_obj_set_style_text_font(call_lbl, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_center(call_lbl);
+
+    restore_mode_ui();
+}
+
+void BluetoothScreen::ResetUi() {
+    reset_ui_state();
 }
 
 void BluetoothScreen::ApplyDefaultMode() {
@@ -838,11 +802,12 @@ void BluetoothScreen::ApplyDefaultMode() {
 
 void BluetoothScreen::LifecycleCallback(screen_lifecycle_event_t event) {
     if (event == SCREEN_LIFECYCLE_LOAD) {
-        ESP_LOGI(TAG, "load: bluetooth_screen");
+        ESP_LOGI(TAG, "load: bluetooth (embedded in settings)");
+        s_screen_active = true;
         s_rx_buffer.clear();
         SimpleUart::getInstance().registerCallback(on_uart_data);
     } else {
-        ESP_LOGI(TAG, "unload: bluetooth_screen");
+        ESP_LOGI(TAG, "unload: bluetooth (embedded in settings)");
         SimpleUart::getInstance().registerCallback(
             std::function<void(const std::vector<uint8_t>&)>());
         s_screen_active = false;
