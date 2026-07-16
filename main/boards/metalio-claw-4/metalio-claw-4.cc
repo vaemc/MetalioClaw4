@@ -180,7 +180,7 @@ private:
         auto& iOExpander = IOExpander::getInstance();
         iOExpander.begin(i2c_bus_);
         iOExpander.setLevel(IOExpander::Pin::BT_POWER, true);
-        // PA 默认关着，开机 8s 后再开，避免上电瞬间推动放。
+        // PA 默认关着，开机 5s 后再开，避免上电瞬间推动放。
         iOExpander.setLevel(IOExpander::Pin::PA, false);
         iOExpander.setLevel(IOExpander::Pin::PA_SWITCH, true);
         iOExpander.setLevel(IOExpander::Pin::RST_4G, true);
@@ -191,7 +191,7 @@ private:
 
         xTaskCreate(
             [](void*) {
-                vTaskDelay(pdMS_TO_TICKS(8000));
+                vTaskDelay(pdMS_TO_TICKS(5000));
                 IOExpander::getInstance().setLevel(IOExpander::Pin::PA, true);
                 ESP_LOGI(TAG, "PA enabled after 8s boot delay");
                 vTaskDelete(nullptr);

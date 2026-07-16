@@ -2326,7 +2326,9 @@ void BuildCardHeader(lv_obj_t* card, LocMode mode, const char* title_text) {
 
     lv_obj_t* badge = lv_obj_create(header);
     StripChrome(badge);
-    lv_obj_set_size(badge, 140, 40);
+    lv_obj_set_height(badge, 40);
+    lv_obj_set_width(badge, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_hor(badge, 16, LV_PART_MAIN);
     lv_obj_set_style_bg_color(badge, lv_color_hex(kColorBadgeSearch),
                               LV_PART_MAIN);
     lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, LV_PART_MAIN);
@@ -2342,6 +2344,8 @@ void BuildCardHeader(lv_obj_t* card, LocMode mode, const char* title_text) {
     lv_obj_t* badge_text = MakeLabel(badge, init_status, &font_puhui_20_4,
                                      lv_color_hex(kColorText),
                                      LV_TEXT_ALIGN_CENTER);
+    lv_obj_set_width(badge_text, LV_SIZE_CONTENT);
+    lv_label_set_long_mode(badge_text, LV_LABEL_LONG_CLIP);
     tab.status_badge = badge;
     tab.status_label = badge_text;
     MakeDivider(card);
@@ -2349,19 +2353,25 @@ void BuildCardHeader(lv_obj_t* card, LocMode mode, const char* title_text) {
 
 constexpr int32_t kFetchBtnW = 200;
 constexpr int32_t kZoomDdW   = 112;
-constexpr int32_t kZoomStepBtnW = 52;
 
 lv_obj_t* MakeActionBtn(lv_obj_t* parent, const char* text, uint32_t bg_hex,
                         lv_event_cb_t on_click, void* user_data,
                         int32_t width) {
     lv_obj_t* btn = lv_button_create(parent);
-    lv_obj_set_size(btn, width, kMapToolbarH - 8);
+    lv_obj_set_height(btn, kMapToolbarH - 8);
+    if (width == LV_SIZE_CONTENT) {
+        lv_obj_set_width(btn, LV_SIZE_CONTENT);
+        lv_obj_set_style_pad_hor(btn, 14, LV_PART_MAIN);
+    } else {
+        lv_obj_set_width(btn, width);
+    }
     lv_obj_set_style_radius(btn, 16, LV_PART_MAIN);
     lv_obj_set_style_bg_color(btn, lv_color_hex(bg_hex), LV_PART_MAIN);
     lv_obj_set_style_shadow_width(btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(btn, on_click, LV_EVENT_CLICKED, user_data);
     lv_obj_t* lbl = lv_label_create(btn);
     lv_label_set_text(lbl, text);
+    lv_obj_set_width(lbl, LV_SIZE_CONTENT);
     lv_obj_set_style_text_color(lbl, lv_color_hex(kColorText), LV_PART_MAIN);
     lv_obj_set_style_text_font(lbl, &font_puhui_20_4, LV_PART_MAIN);
     lv_obj_center(lbl);
@@ -2570,10 +2580,10 @@ void BuildMapWindow(lv_obj_t* scr) {
 
     s_map_win.map_zoom_out_btn =
         MakeActionBtn(toolbar, I18n::T("缩小"), 0x4B5563, OnMapZoomOutClicked, nullptr,
-                      kZoomStepBtnW);
+                      LV_SIZE_CONTENT);
     s_map_win.map_zoom_in_btn =
         MakeActionBtn(toolbar, I18n::T("放大"), 0x3B82F6, OnMapZoomInClicked, nullptr,
-                      kZoomStepBtnW);
+                      LV_SIZE_CONTENT);
     UpdateZoomStepButtons();
 
     const int32_t stage_y = kHeaderH + kMapToolbarH + 20;

@@ -178,6 +178,7 @@ void BuildSetupPanel(lv_obj_t* scr) {
     lv_obj_set_size(slider_row, kTestPanelW - 2 * kTestSideMargin, 52);
     lv_obj_align(slider_row, LV_ALIGN_TOP_MID, 0, kTestHeaderH + 24 + 220 + 20);
     lv_obj_set_style_bg_opa(slider_row, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_add_flag(slider_row, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
     lv_obj_remove_flag(slider_row, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* slider = lv_slider_create(slider_row);
@@ -189,6 +190,9 @@ void BuildSetupPanel(lv_obj_t* scr) {
     lv_obj_set_style_bg_color(slider, lv_color_hex(kTestColorMuted), LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider, lv_color_hex(0x3B82F6), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(slider, lv_color_white(), LV_PART_KNOB);
+    lv_obj_add_flag(slider, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_set_style_pad_hor(slider, 24, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(slider, 10, LV_PART_MAIN);
     lv_obj_set_style_pad_all(slider, 4, LV_PART_KNOB);
     lv_obj_set_style_radius(slider, LV_RADIUS_CIRCLE, LV_PART_KNOB);
     lv_obj_set_style_radius(slider, 10, LV_PART_MAIN);
