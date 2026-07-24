@@ -38,6 +38,7 @@
 #include "recording_screen/recording_screen.h"
 #include "openclaw_screen/openclaw_screen.h"
 #include "ai_image_gen_screen/ai_image_gen_screen.h"
+#include "translate_screen/translate_screen.h"
 #include "pwr_key_handler.h"
 #include "screen_util.h"
 #include "idle_power_policy.h"
@@ -288,6 +289,15 @@ void ai_image_gen_lifecycle_cb(screen_lifecycle_event_t event) {
     AiImageGenScreen::LifecycleCallback(event);
 }
 
+void translate_lifecycle_cb(screen_lifecycle_event_t event) {
+    PwrKey_OnScreenLifecycle("translate", event);
+    if (event == SCREEN_LIFECYCLE_LOAD) {
+        ESP_LOGI(TAG_HOME, "load: translate_screen");
+    } else {
+        ESP_LOGI(TAG_HOME, "unload: translate_screen");
+    }
+    TranslateScreen::LifecycleCallback(event);
+}
 
 constexpr int kPanelSize = 720;
 constexpr int kStatusBarHeight = 48;      
@@ -566,6 +576,16 @@ void LaunchAiImageGen(screen_lifecycle_cb_t lifecycle_cb) {
     }
 }
 
+void LaunchTranslate(screen_lifecycle_cb_t lifecycle_cb) {
+    lv_obj_t* old_scr = lv_screen_active();
+    lv_obj_t* app = TranslateScreen::Create();
+    screen_attach_lifecycle(app, lifecycle_cb);
+    lv_screen_load(app);
+    if (old_scr != nullptr && old_scr != app) {
+        lv_obj_delete_async(old_scr);
+    }
+}
+
 // ESPClaw：弹提示 → 将启动分区切到 ota_1 → 重启进入 edge_agent。
 bool s_espclaw_switching = false;
 lv_obj_t* s_espclaw_overlay = nullptr;
@@ -795,7 +815,7 @@ constexpr AppEntry kApps[] = {
     {"radio",       "电台",     LaunchRadio,      radio_lifecycle_cb},
     {"recording",       "录音",     LaunchRecording,      recording_lifecycle_cb},
     {"ai_image_gen",       "AI生图",     LaunchAiImageGen,      ai_image_gen_lifecycle_cb},
-    // {"translate",       "翻译",     LaunchTranslate,      translate_lifecycle_cb},
+    {"translate",       "翻译",     LaunchTranslate,      translate_lifecycle_cb},
 };
 
 constexpr int kTotalApps = static_cast<int>(sizeof(kApps) / sizeof(kApps[0]));

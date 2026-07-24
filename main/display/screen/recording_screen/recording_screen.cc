@@ -551,17 +551,28 @@ void UpdateRecordButtonUi() {
 }
 
 void MakeNextRecordPath(char* path, size_t path_size) {
+    // 设备序列：与配网 AP 相同取 MAC 末两字节 %02X%02X；MAC 来源统一 SystemInfo::GetMacAddress()
+    char serial[8] = "0000";
+    {
+        const std::string mac = SystemInfo::GetMacAddress();
+        unsigned b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0;
+        if (std::sscanf(mac.c_str(), "%x:%x:%x:%x:%x:%x", &b0, &b1, &b2, &b3, &b4,
+                        &b5) == 6) {
+            std::snprintf(serial, sizeof(serial), "%02X%02X", b4 & 0xff, b5 & 0xff);
+        }
+    }
+
     time_t now = time(nullptr);
     struct tm tm_info = {};
     if (localtime_r(&now, &tm_info) != nullptr && tm_info.tm_year > 70) {
-        std::snprintf(path, path_size, "%s/REC_%04d%02d%02d_%02d%02d%02d.opus",
-                      kPosixDir, tm_info.tm_year + 1900, tm_info.tm_mon + 1,
+        std::snprintf(path, path_size, "%s/REC_%s_%04d%02d%02d_%02d%02d%02d.opus",
+                      kPosixDir, serial, tm_info.tm_year + 1900, tm_info.tm_mon + 1,
                       tm_info.tm_mday, tm_info.tm_hour, tm_info.tm_min, tm_info.tm_sec);
         return;
     }
     const unsigned long ts_ms =
         static_cast<unsigned long>(esp_timer_get_time() / 1000ULL);
-    std::snprintf(path, path_size, "%s/REC_%lu.opus", kPosixDir, ts_ms);
+    std::snprintf(path, path_size, "%s/REC_%s_%lu.opus", kPosixDir, serial, ts_ms);
 }
 
 void RecordTask(void* /*arg*/) {

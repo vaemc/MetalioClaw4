@@ -3403,6 +3403,111 @@
       "key": "AI_IMAGE_TASK_START_FAILED",
       "zh-CN": "任务启动失败",
       "en-US": "Failed to start task"
+    },
+    {
+      "key": "TRANSLATE",
+      "zh-CN": "翻译",
+      "en-US": "Translate"
+    },
+    {
+      "key": "TRANSLATE_LIVE",
+      "zh-CN": "实时翻译",
+      "en-US": "Live translate"
+    },
+    {
+      "key": "TRANSLATE_STOP",
+      "zh-CN": "停止翻译",
+      "en-US": "Stop translate"
+    },
+    {
+      "key": "TRANSLATE_STOPPING",
+      "zh-CN": "停止中…",
+      "en-US": "Stopping…"
+    },
+    {
+      "key": "TRANSLATE_CONNECTING",
+      "zh-CN": "连接中…",
+      "en-US": "Connecting…"
+    },
+    {
+      "key": "TRANSLATE_HINT",
+      "zh-CN": "选择语言后点击实时翻译",
+      "en-US": "Pick languages, then start"
+    },
+    {
+      "key": "TRANSLATE_SOURCE_HINT",
+      "zh-CN": "识别原文将显示在这里",
+      "en-US": "Recognized text appears here"
+    },
+    {
+      "key": "TRANSLATE_TRANS_HINT",
+      "zh-CN": "译文将显示在这里",
+      "en-US": "Translation appears here"
+    },
+    {
+      "key": "TRANSLATE_SOURCE_TITLE",
+      "zh-CN": "识别原文",
+      "en-US": "Source"
+    },
+    {
+      "key": "TRANSLATE_TRANS_TITLE",
+      "zh-CN": "译文",
+      "en-US": "Translation"
+    },
+    {
+      "key": "TRANSLATE_FETCHING_TOKEN",
+      "zh-CN": "获取令牌…",
+      "en-US": "Fetching token…"
+    },
+    {
+      "key": "TRANSLATE_TOKEN_FAILED",
+      "zh-CN": "获取令牌失败",
+      "en-US": "Token request failed"
+    },
+    {
+      "key": "TRANSLATE_CONNECT_FAILED",
+      "zh-CN": "连接失败",
+      "en-US": "Connection failed"
+    },
+    {
+      "key": "TRANSLATE_READY_TIMEOUT",
+      "zh-CN": "等待就绪超时",
+      "en-US": "Ready timeout"
+    },
+    {
+      "key": "TRANSLATE_IN_PROGRESS",
+      "zh-CN": "翻译中",
+      "en-US": "Translating"
+    },
+    {
+      "key": "TRANSLATE_STOPPED",
+      "zh-CN": "已停止",
+      "en-US": "Stopped"
+    },
+    {
+      "key": "TRANSLATE_ERROR",
+      "zh-CN": "翻译出错",
+      "en-US": "Translate error"
+    },
+    {
+      "key": "TRANSLATE_SAME_LANG",
+      "zh-CN": "源语言与目标语言不能相同",
+      "en-US": "Source and target must differ"
+    },
+    {
+      "key": "TRANSLATE_AUDIO_NOT_READY",
+      "zh-CN": "音频未就绪",
+      "en-US": "Audio not ready"
+    },
+    {
+      "key": "TRANSLATE_AUDIO_BUSY",
+      "zh-CN": "音频忙，稍后再试",
+      "en-US": "Audio busy, try later"
+    },
+    {
+      "key": "TRANSLATE_START_FAILED",
+      "zh-CN": "启动失败",
+      "en-US": "Failed to start"
     }
   ]
 }

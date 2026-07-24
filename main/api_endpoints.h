@@ -94,6 +94,9 @@ constexpr const char* kText2Image = "/xiaozhi/api/dashscope/text2image";
 constexpr const char* kText2ImageTaskFmt =
     "/xiaozhi/api/dashscope/text2image/tasks/%s?maxSide=450";
 
+// Sonicloud 实时同声传译：换 Token，返回 data.wsUrl
+constexpr const char* kSinicloudToken = "/xiaozhi/api/sinicloud/token";
+
 // Weather
 constexpr const char* kWeatherDistrictPath =
     "/api/v1/weather/district?dataType=all&districtId=";
