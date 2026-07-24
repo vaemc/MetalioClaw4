@@ -86,6 +86,8 @@ constexpr const char* kOpenClawConversationDeleteFmt =
 
 // ASR
 constexpr const char* kAsrTranscribe = "/api/v1/asr/transcribe";
+constexpr const char* kAsrAudioRecords =
+    "/api/v1/asr/audio-records?originalName=";
 // 设备侧原始 WAV 转写（octet-stream body）
 constexpr const char* kXiaozhiAsrWav = "/xiaozhi/api/asr?format=wav";
 
@@ -128,6 +130,13 @@ inline std::string OpenClawConversationDeleteUrl(
     std::snprintf(path, sizeof(path), kOpenClawConversationDeleteFmt,
                   conversation_id.c_str());
     return Url(path);
+}
+
+inline std::string AsrAudioRecordsUrl(const char* original_name) {
+    if (original_name == nullptr || original_name[0] == '\0') {
+        return Url(kAsrAudioRecords);
+    }
+    return Url(kAsrAudioRecords) + original_name;
 }
 
 inline std::string Text2ImageTaskUrl(const std::string& task_id) {

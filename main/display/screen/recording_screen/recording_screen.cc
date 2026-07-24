@@ -120,7 +120,8 @@ std::atomic<uint32_t> s_recorded_frames{0};
 
 TaskHandle_t s_record_task = nullptr;
 TaskHandle_t s_play_task = nullptr;
-TaskHandle_t s_asr_task = nullptr;
+TaskHandle_t s_asr_task = nullptr;        // 上传转写
+TaskHandle_t s_asr_query_task = nullptr;  // 查询转写结果
 TaskHandle_t s_meta_task = nullptr;
 lv_timer_t* s_tick_timer = nullptr;
 bool s_wake_disabled_by_us = false;
@@ -160,6 +161,7 @@ void SetDetailStatusText(const char* text);
 void SetDetailResultText(const char* text);
 void BuildDetailPanel(lv_obj_t* parent);
 void ScheduleDurationFill();
+void ScheduleAsrQuery();
 bool WriteDurationSidecar(const char* opus_path, int duration_sec);
 int ReadDurationSidecar(const char* opus_path);
 void UnlinkDurationSidecar(const char* opus_path);
@@ -1395,28 +1397,25 @@ void AppendJsonStringArray(std::string& out, cJSON* arr, const char* title) {
     out += "\n";
 }
 
-std::string FormatAsrResult(cJSON* data) {
+std::string FormatCompletedAsrText(cJSON* data) {
     std::string out;
-    cJSON* text = cJSON_GetObjectItemCaseSensitive(data, "text");
+    cJSON* text = cJSON_GetObjectItemCaseSensitive(data, "asrText");
     if (cJSON_IsString(text) && text->valuestring != nullptr &&
         text->valuestring[0] != '\0') {
-        out += I18n::T("全文");
-        out += "：\n";
-        out += text->valuestring;
-        out += "\n\n";
+        out = text->valuestring;
     }
 
     cJSON* duration = cJSON_GetObjectItemCaseSensitive(data, "durationMs");
-    if (cJSON_IsNumber(duration)) {
+    if (cJSON_IsNumber(duration) && duration->valuedouble > 0) {
         char line[64];
         std::snprintf(line, sizeof(line), I18n::T("音频时长：%.1f 秒"),
                       duration->valuedouble / 1000.0);
+        if (!out.empty()) {
+            out += "\n\n";
+        }
         out += line;
-        out += "\n\n";
     }
 
-    AppendJsonStringArray(out, cJSON_GetObjectItemCaseSensitive(data, "dialogueLines"),
-                          I18n::T("对话"));
     AppendJsonStringArray(out, cJSON_GetObjectItemCaseSensitive(data, "summary"),
                           I18n::T("摘要"));
 
@@ -1426,7 +1425,133 @@ std::string FormatAsrResult(cJSON* data) {
     return out;
 }
 
-void AsrTask(void* /*arg*/) {
+void ApplyAsrRecordData(cJSON* data) {
+    if (!cJSON_IsObject(data)) {
+        return;
+    }
+    cJSON* status = cJSON_GetObjectItemCaseSensitive(data, "status");
+    if (!cJSON_IsString(status) || status->valuestring == nullptr) {
+        return;
+    }
+    const char* st = status->valuestring;
+    if (std::strcmp(st, "transcribing") == 0) {
+        PostDetailResultFromWorker(I18n::T("转写处理中，请稍后"));
+        PostDetailStatusFromWorker(I18n::T("转写处理中，请稍后"));
+        return;
+    }
+    if (std::strcmp(st, "completed") == 0) {
+        const std::string formatted = FormatCompletedAsrText(data);
+        PostDetailResultFromWorker(formatted.c_str());
+        PostDetailStatusFromWorker(I18n::T("转写完成"));
+        return;
+    }
+    if (std::strcmp(st, "failed") == 0) {
+        cJSON* err = cJSON_GetObjectItemCaseSensitive(data, "errorMessage");
+        if (cJSON_IsString(err) && err->valuestring != nullptr &&
+            err->valuestring[0] != '\0') {
+            PostDetailResultFromWorker(err->valuestring);
+            PostDetailStatusFromWorker(I18n::T("转写失败"));
+        } else {
+            PostDetailStatusFromWorker(I18n::T("转写失败"));
+        }
+    }
+    // 其它状态：静默忽略
+}
+
+void AsrQueryTask(void* /*arg*/) {
+    char name_snapshot[96] = {};
+    strlcpy(name_snapshot, s_detail_name, sizeof(name_snapshot));
+    if (name_snapshot[0] == '\0') {
+        s_asr_query_task = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    auto network = Board::GetInstance().GetNetwork();
+    if (network == nullptr) {
+        s_asr_query_task = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
+    auto http = network->CreateHttp(0);
+    if (http == nullptr) {
+        s_asr_query_task = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    const std::string url = api::AsrAudioRecordsUrl(name_snapshot);
+    const std::string device_id = SystemInfo::GetMacAddress();
+    api::LogHttpRequest(TAG, "GET", url, std::string(), "ASR audio-records");
+    http->SetHeader("Accept", "*/*");
+    http->SetHeader("Connection", "close");
+    http->SetHeader("X-Device-Id", device_id.c_str());
+
+    if (!http->Open("GET", url)) {
+        http->Close();
+        s_asr_query_task = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
+    const int status = http->GetStatusCode();
+    const std::string resp = http->ReadAll();
+    http->Close();
+    api::LogHttpResponse(TAG, status, api::RedactClawUrlsForLog(resp));
+
+    if (s_stop_asr.load() || !s_detail_open ||
+        std::strcmp(name_snapshot, s_detail_name) != 0) {
+        s_asr_query_task = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    // 无记录 / 请求失败：不改动 UI（「没有就不管」）
+    if (status != 200 || resp.empty()) {
+        s_asr_query_task = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
+
+    cJSON* root = cJSON_Parse(resp.c_str());
+    if (root == nullptr) {
+        s_asr_query_task = nullptr;
+        vTaskDelete(nullptr);
+        return;
+    }
+    cJSON* code = cJSON_GetObjectItemCaseSensitive(root, "code");
+    cJSON* data = cJSON_GetObjectItemCaseSensitive(root, "data");
+    if (cJSON_IsNumber(code) && code->valueint == 200 && cJSON_IsObject(data)) {
+        ApplyAsrRecordData(data);
+    }
+    cJSON_Delete(root);
+
+    const bool need_again =
+        !s_stop_asr.load() && s_detail_open && s_detail_name[0] != '\0' &&
+        std::strcmp(name_snapshot, s_detail_name) != 0;
+    s_asr_query_task = nullptr;
+    if (need_again) {
+        ScheduleAsrQuery();
+    }
+    vTaskDelete(nullptr);
+}
+
+void ScheduleAsrQuery() {
+    if (!s_screen_alive || !s_detail_open || s_detail_name[0] == '\0') {
+        return;
+    }
+    if (s_asr_query_task != nullptr) {
+        return;
+    }
+    s_stop_asr.store(false);
+    if (xTaskCreatePinnedToCore(AsrQueryTask, "rec_asr_q", 8 * 1024, nullptr,
+                                tskIDLE_PRIORITY + 1, &s_asr_query_task,
+                                0) != pdPASS) {
+        s_asr_query_task = nullptr;
+        ESP_LOGW(TAG, "asr query task start failed");
+    }
+}
+
+void AsrUploadTask(void* /*arg*/) {
     FILE* file = fopen(s_detail_path, "rb");
     if (file == nullptr) {
         PostDetailStatusFromWorker(I18n::T("无法打开录音文件"));
@@ -1524,7 +1649,7 @@ void AsrTask(void* /*arg*/) {
     http->SetHeader("Connection", "close");
     http->SetHeader("X-Device-Id", device_id.c_str());
 
-    PostDetailStatusFromWorker(I18n::T("正在转写…"));
+    PostDetailStatusFromWorker(I18n::T("正在上传…"));
     if (!http->Open("POST", url)) {
         PostDetailStatusFromWorker(I18n::T("转写请求失败"));
         s_asr_task = nullptr;
@@ -1575,10 +1700,10 @@ void AsrTask(void* /*arg*/) {
         return;
     }
 
-    const std::string formatted = FormatAsrResult(data);
     cJSON_Delete(root);
-    PostDetailResultFromWorker(formatted.c_str());
-    PostDetailStatusFromWorker(I18n::T("转写完成"));
+    PostDetailResultFromWorker(I18n::T("转写处理中，请稍后"));
+    PostDetailStatusFromWorker(
+        I18n::T("上传成功，请稍后来查看转写结果，勿反复上传"));
     s_asr_task = nullptr;
     vTaskDelete(nullptr);
 }
@@ -1588,7 +1713,7 @@ void OnDetailAsrClicked(lv_event_t* /*e*/) {
         return;
     }
     if (s_asr_task != nullptr) {
-        SetDetailStatusText(I18n::T("正在转写…"));
+        SetDetailStatusText(I18n::T("正在上传…"));
         return;
     }
     if (s_state.load() == RecState::Recording || s_state.load() == RecState::Saving) {
@@ -1597,9 +1722,8 @@ void OnDetailAsrClicked(lv_event_t* /*e*/) {
     }
 
     s_stop_asr.store(false);
-    SetDetailStatusText(I18n::T("正在转写…"));
-    SetDetailResultText("");
-    if (xTaskCreatePinnedToCore(AsrTask, "rec_asr", 16 * 1024, nullptr,
+    SetDetailStatusText(I18n::T("正在上传…"));
+    if (xTaskCreatePinnedToCore(AsrUploadTask, "rec_asr", 16 * 1024, nullptr,
                                 tskIDLE_PRIORITY + 2, &s_asr_task, 0) != pdPASS) {
         s_asr_task = nullptr;
         SetDetailStatusText(I18n::T("转写任务启动失败"));
@@ -1652,10 +1776,11 @@ void ShowDetail(int idx) {
         lv_label_set_text(s_ui.detail_meta, meta);
     }
     SetDetailStatusText("");
-    SetDetailResultText(I18n::T("点击「录音转写」生成文字结果"));
+    SetDetailResultText(I18n::T("点击「录音转写」上传，稍后再进详情查看结果"));
     UpdateDetailPlayButton();
     lv_obj_remove_flag(s_ui.detail_panel, LV_OBJ_FLAG_HIDDEN);
     lv_obj_move_foreground(s_ui.detail_panel);
+    ScheduleAsrQuery();
 }
 
 void OnRowClicked(lv_event_t* e) {
@@ -1806,7 +1931,7 @@ void ForceStopAll() {
     StopTickTimer();
     for (int i = 0; i < 80 &&
          (s_record_task != nullptr || s_play_task != nullptr || s_asr_task != nullptr ||
-          s_meta_task != nullptr);
+          s_asr_query_task != nullptr || s_meta_task != nullptr);
          ++i) {
         vTaskDelay(pdMS_TO_TICKS(20));
     }

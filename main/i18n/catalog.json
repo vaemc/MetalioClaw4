@@ -3235,6 +3235,21 @@
       "en-US": "Transcribing…"
     },
     {
+      "key": "ASR_UPLOADING",
+      "zh-CN": "正在上传…",
+      "en-US": "Uploading…"
+    },
+    {
+      "key": "ASR_UPLOAD_OK_WAIT",
+      "zh-CN": "上传成功，请稍后来查看转写结果，勿反复上传",
+      "en-US": "Uploaded. Check back later for the transcript; don't re-upload."
+    },
+    {
+      "key": "ASR_PROCESSING_WAIT",
+      "zh-CN": "转写处理中，请稍后",
+      "en-US": "Transcription in progress, please wait"
+    },
+    {
       "key": "ASR_REQUEST_FAILED",
       "zh-CN": "转写请求失败",
       "en-US": "Transcription request failed"
@@ -3266,8 +3281,8 @@
     },
     {
       "key": "ASR_HINT",
-      "zh-CN": "点击「录音转写」生成文字结果",
-      "en-US": "Tap Transcribe to generate text"
+      "zh-CN": "点击「录音转写」上传，稍后再进详情查看结果",
+      "en-US": "Tap Transcribe to upload, then reopen detail later for the result"
     },
     {
       "key": "AI_IMAGE_GEN",
