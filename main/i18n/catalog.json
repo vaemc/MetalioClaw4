@@ -910,6 +910,26 @@
       "en-US": "Stress Test"
     },
     {
+      "key": "SCREEN_COLOR_TEST",
+      "zh-CN": "屏幕测试",
+      "en-US": "Screen Test"
+    },
+    {
+      "key": "TOUCH_PANEL_TEST",
+      "zh-CN": "触摸测试",
+      "en-US": "Touch Test"
+    },
+    {
+      "key": "TOUCH_TAP_TARGET_HINT",
+      "zh-CN": "点击圆点 (%d/%d)",
+      "en-US": "Tap the dot (%d/%d)"
+    },
+    {
+      "key": "TOUCH_PAINT_HINT",
+      "zh-CN": "请涂满全屏，检查触摸盲区",
+      "en-US": "Paint the screen to find dead zones"
+    },
+    {
       "key": "BACK_2",
       "zh-CN": "右滑返回",
       "en-US": "Back"
@@ -3523,6 +3543,21 @@
       "key": "TRANSLATE_START_FAILED",
       "zh-CN": "启动失败",
       "en-US": "Failed to start"
+    },
+    {
+      "key": "WIFI_NOT_CONNECTED_TITLE",
+      "zh-CN": "未连接 WiFi",
+      "en-US": "WiFi Not Connected"
+    },
+    {
+      "key": "WIFI_NOT_CONNECTED_HINT",
+      "zh-CN": "请先连接 WiFi 后再使用该应用",
+      "en-US": "Connect to WiFi before using this app"
+    },
+    {
+      "key": "WIFI_NOT_CONNECTED_HINT_TRANSCRIBE",
+      "zh-CN": "请先连接 WiFi 后再使用转写",
+      "en-US": "Connect to WiFi before transcribing"
     }
   ]
 }

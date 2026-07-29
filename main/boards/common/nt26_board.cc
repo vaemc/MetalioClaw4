@@ -127,7 +127,7 @@ void Nt26Board::StartNetwork() {
                 if (network_wait_event_) {
                     xEventGroupSetBits(network_wait_event_, kWaitNetworkFailed);
                 }
-                ScheduleAsyncStop();
+                // 不再调 ScheduleAsyncStop()：保留 AT 通道，允许用户切换 SIM 卡槽
                 OnNetworkEvent(NetworkEvent::ModemErrorNoSim);
                 break;
             case UartEthModem::UartEthModemEvent::ErrorRegistrationDenied:
@@ -135,7 +135,7 @@ void Nt26Board::StartNetwork() {
                 if (network_wait_event_) {
                     xEventGroupSetBits(network_wait_event_, kWaitNetworkFailed);
                 }
-                ScheduleAsyncStop();
+                // 不再调 ScheduleAsyncStop()：保留 AT 通道，允许用户切换 SIM 卡槽
                 OnNetworkEvent(NetworkEvent::ModemErrorRegDenied);
                 break;
             case UartEthModem::UartEthModemEvent::Connecting:
@@ -147,7 +147,7 @@ void Nt26Board::StartNetwork() {
                 if (network_wait_event_) {
                     xEventGroupSetBits(network_wait_event_, kWaitNetworkFailed);
                 }
-                ScheduleAsyncStop();
+                // 不再调 ScheduleAsyncStop()：保留 AT 通道，允许用户切换 SIM 卡槽
                 OnNetworkEvent(NetworkEvent::ModemErrorInitFailed);
                 break;
             case UartEthModem::UartEthModemEvent::InFlightMode:

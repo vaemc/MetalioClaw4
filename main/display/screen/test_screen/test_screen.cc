@@ -4,9 +4,11 @@
 #include "esp_log.h"
 #include "home_screen/home_screen.h"
 #include "auto_test_screen.h"
+#include "screen_color_test.h"
 #include "stress_test_screen.h"
 #include "screen_util.h"
 #include "test_ui_common.h"
+#include "touch_panel_test.h"
 
 namespace {
 
@@ -40,6 +42,14 @@ void OnStressTestClicked(lv_event_t* /*e*/) {
     TestUiNavigateTo(StressTestScreen::Create);
 }
 
+void OnScreenColorTestClicked(lv_event_t* /*e*/) {
+    TestUiNavigateTo(ScreenColorTest::Create);
+}
+
+void OnTouchPanelTestClicked(lv_event_t* /*e*/) {
+    TestUiNavigateTo(TouchPanelTest::Create);
+}
+
 void OnScreenUnloaded(lv_event_t* /*e*/) {
     s_screen = nullptr;
 }
@@ -62,6 +72,8 @@ lv_obj_t* TestScreen::Create() {
     lv_obj_t* body = TestUiCreateScrollBody(scr);
     TestUiCreateMenuRow(body, I18n::T("自动测试"), OnAutoTestClicked);
     TestUiCreateMenuRow(body, I18n::T("压力测试"), OnStressTestClicked);
+    TestUiCreateMenuRow(body, I18n::T("屏幕测试"), OnScreenColorTestClicked);
+    TestUiCreateMenuRow(body, I18n::T("触摸测试"), OnTouchPanelTestClicked);
 
     if (s_lifecycle_cb != nullptr) {
         screen_attach_lifecycle(scr, s_lifecycle_cb);

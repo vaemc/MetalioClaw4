@@ -1807,12 +1807,16 @@ esp_err_t UartEthModem::RunNormalModeInitSequence() {
     if (!WaitForRegistration(60000)) {
         if (cell_info_.stat == 3) {
             ESP_LOGE(kTag, "Registration denied");
-            SetNetworkEvent(UartEthModemEvent::ErrorRegistrationDenied);
         } else {
             ESP_LOGE(kTag, "Registration timeout");
-            SetNetworkEvent(UartEthModemEvent::ErrorInitFailed);
         }
-        return ESP_ERR_TIMEOUT;
+        // 注册超时/拒绝后不要返回错误导致上层 Stop() 整个 modem。保留 AT 通
+        // 道可用，让用户仍能通过 AT+ECSIMCFG 切换 SIM 卡槽或排查问题。
+        // 行为与 NoSim 场景对齐：标记 initialized 并发 InFlightMode。
+        ESP_LOGW(kTag, "Registration failed, keep AT channel alive for SIM switching");
+        initialized_ = true;
+        SetNetworkEvent(UartEthModemEvent::InFlightMode);
+        return ESP_OK;
     }
 
     int state=0;
