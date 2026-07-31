@@ -31,6 +31,7 @@
 #include "SdCardManager.hpp"
 #include "screen_util.h"
 #include "system_info.h"
+#include "wifi_required_dialog.h"
 
 #include <cJSON.h>
 #include <opus_encoder.h>
@@ -1542,6 +1543,10 @@ void ScheduleAsrQuery() {
     if (s_asr_query_task != nullptr) {
         return;
     }
+    // 查询结果需联网；未连 WiFi 时静默跳过（不弹窗，本地详情仍可用）。
+    if (WifiRequired_ShouldBlock()) {
+        return;
+    }
     s_stop_asr.store(false);
     if (xTaskCreatePinnedToCore(AsrQueryTask, "rec_asr_q", 8 * 1024, nullptr,
                                 tskIDLE_PRIORITY + 1, &s_asr_query_task,
@@ -1718,6 +1723,11 @@ void OnDetailAsrClicked(lv_event_t* /*e*/) {
     }
     if (s_state.load() == RecState::Recording || s_state.load() == RecState::Saving) {
         SetDetailStatusText(I18n::T("请先结束录音"));
+        return;
+    }
+    // 转写需联网：WiFi 模式未连接时弹窗拦截（本地录音/播放不受影响）。
+    if (WifiRequired_ShouldBlock()) {
+        WifiRequired_ShowDialog("请先连接 WiFi 后再使用转写");
         return;
     }
 

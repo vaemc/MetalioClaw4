@@ -51,6 +51,7 @@
 #include "theme_screen/theme_screen.h"
 #include "info_screen/info_screen.h"
 #include "theme_manager.h"
+#include "wifi_required_dialog.h"
 
 LV_FONT_DECLARE(font_puhui_20_4);
 LV_FONT_DECLARE(font_puhui_30_4);
@@ -361,6 +362,8 @@ struct AppEntry {
     const char* name;                    // display name shown under the icon
     LaunchFn launch;                     // tapped -> launch this app (nullptr = no action)
     screen_lifecycle_cb_t lifecycle_cb;  // load / unload observer
+    // WiFi 模式下进入前必须已连上 WiFi；4G 模式不拦（走蜂窝）。
+    bool requires_wifi;
 };
 
 void LaunchGame2048(screen_lifecycle_cb_t lifecycle_cb) {
@@ -790,32 +793,33 @@ void info_lifecycle_cb(screen_lifecycle_event_t event) {
 // 主题图标，资源 ic_app_home_themeN_magnet.spng 缺失时该格会显示为空。
 // name 存 zh-CN msgid（源文案）；显示时用 I18n::T(entry.name)。
 constexpr AppEntry kApps[] = {
-    {"chat",           "聊天",     LaunchChat,          chat_lifecycle_cb},
-    {"wifi",           "网络配置", LaunchWifi,          wifi_lifecycle_cb},
-    {"digital_people", "数字人",   LaunchDigitalPeople, digital_people_lifecycle_cb},
-    {"call",           "电话",     LaunchCall,          call_lifecycle_cb},
-    {"music",          "音乐",     LaunchMusic,         music_lifecycle_cb},
-    {"calendar",       "日历",     LaunchCalendar,      calendar_lifecycle_cb},
-    {"openclaw",       "OpenClaw", LaunchOpenClaw,      openclaw_lifecycle_cb},
-    {"espclaw",       "ESPClaw",     LaunchEspClaw,     nullptr},
-    {"camera",         "相机",     LaunchCamera,        camera_lifecycle_cb},
-    {"gps",            "定位",     LaunchGps,           gps_lifecycle_cb},
-    {"spirit_level",   "水平仪",   LaunchLevel,         level_lifecycle_cb},
-    {"magnet",         "磁场",     LaunchMagnet,        magnet_lifecycle_cb},
-    {"vibrate",        "震动",     LaunchVibrate,       vibrate_lifecycle_cb},
-    {"calculator",     "计算器",   LaunchCalculator,    calculator_lifecycle_cb},
-    {"weather",        "天气",     LaunchWeather,       weather_lifecycle_cb},
-    {"sd",             "SD卡",     LaunchSdCard,        sd_card_lifecycle_cb},
-    {"pin",            "引脚测试", LaunchPinTest,       pin_test_lifecycle_cb},
-    {"2048",           "2048",     LaunchGame2048,      game_2048_lifecycle_cb},
-    {"info",           "系统信息", LaunchInfo,          info_lifecycle_cb},
-    {"theme",          "主题",     LaunchTheme,         theme_lifecycle_cb},
-    {"test",           "测试",     LaunchTest,          test_lifecycle_cb},
-    {"settings",       "设置",     LaunchSettings,      settings_lifecycle_cb},
-    {"radio",       "电台",     LaunchRadio,      radio_lifecycle_cb},
-    {"recording",       "录音",     LaunchRecording,      recording_lifecycle_cb},
-    {"ai_image_gen",       "AI生图",     LaunchAiImageGen,      ai_image_gen_lifecycle_cb},
-    {"translate",       "翻译",     LaunchTranslate,      translate_lifecycle_cb},
+    {"chat",           "聊天",     LaunchChat,          chat_lifecycle_cb,          true},
+    {"wifi",           "网络配置", LaunchWifi,          wifi_lifecycle_cb,          false},
+    {"digital_people", "数字人",   LaunchDigitalPeople, digital_people_lifecycle_cb, true},
+    {"call",           "电话",     LaunchCall,          call_lifecycle_cb,          false},
+    {"music",          "音乐",     LaunchMusic,         music_lifecycle_cb,         false},
+    {"calendar",       "日历",     LaunchCalendar,      calendar_lifecycle_cb,      false},
+    {"openclaw",       "OpenClaw", LaunchOpenClaw,      openclaw_lifecycle_cb,      true},
+    {"espclaw",        "ESPClaw",  LaunchEspClaw,       nullptr,                    false},
+    {"camera",         "相机",     LaunchCamera,        camera_lifecycle_cb,        false},
+    {"gps",            "定位",     LaunchGps,           gps_lifecycle_cb,           true},
+    {"spirit_level",   "水平仪",   LaunchLevel,         level_lifecycle_cb,         false},
+    {"magnet",         "磁场",     LaunchMagnet,        magnet_lifecycle_cb,        false},
+    {"vibrate",        "震动",     LaunchVibrate,       vibrate_lifecycle_cb,       false},
+    {"calculator",     "计算器",   LaunchCalculator,    calculator_lifecycle_cb,    false},
+    {"weather",        "天气",     LaunchWeather,       weather_lifecycle_cb,       true},
+    {"sd",             "SD卡",     LaunchSdCard,        sd_card_lifecycle_cb,       false},
+    {"pin",            "引脚测试", LaunchPinTest,       pin_test_lifecycle_cb,      false},
+    {"2048",           "2048",     LaunchGame2048,      game_2048_lifecycle_cb,     false},
+    {"info",           "系统信息", LaunchInfo,          info_lifecycle_cb,          false},
+    {"theme",          "主题",     LaunchTheme,         theme_lifecycle_cb,         false},
+    {"test",           "测试",     LaunchTest,          test_lifecycle_cb,          false},
+    {"settings",       "设置",     LaunchSettings,      settings_lifecycle_cb,      false},
+    {"radio",          "电台",     LaunchRadio,         radio_lifecycle_cb,         true},
+    // 录音本地可用；仅「录音转写」按钮需要联网（见 recording_screen）。
+    {"recording",      "录音",     LaunchRecording,     recording_lifecycle_cb,     false},
+    {"ai_image_gen",   "AI生图",   LaunchAiImageGen,    ai_image_gen_lifecycle_cb,  true},
+    {"translate",      "翻译",     LaunchTranslate,     translate_lifecycle_cb,     true},
 };
 
 constexpr int kTotalApps = static_cast<int>(sizeof(kApps) / sizeof(kApps[0]));
@@ -923,10 +927,20 @@ lv_style_transition_dsc_t& GetPressTransition() {
     return dsc;
 }
 
-void LaunchHomeApp(const AppEntry* app) {
-    if (app != nullptr && app->launch != nullptr) {
-        app->launch(app->lifecycle_cb);
+// 返回 false：被 WiFi 未连接拦截（调用方需恢复图标按压态）。
+bool LaunchHomeApp(const AppEntry* app) {
+    if (app == nullptr || app->launch == nullptr) {
+        return false;
     }
+    // 仅对 requires_wifi 的应用做入口拦截；录音等本地可用的应用不在此拦。
+    if (app->requires_wifi && WifiRequired_ShouldBlock()) {
+        ESP_LOGW(TAG_HOME, "block app '%s': WiFi not connected",
+                 app->icon_suffix != nullptr ? app->icon_suffix : "?");
+        WifiRequired_ShowDialog();
+        return false;
+    }
+    app->launch(app->lifecycle_cb);
+    return true;
 }
 
 struct CellScaleCtx {
@@ -953,7 +967,9 @@ void OnCellScaleTimer(lv_timer_t* timer) {
     lv_timer_delete(timer);
 
     if (ctx.launch_app != nullptr) {
-        LaunchHomeApp(ctx.launch_app);
+        if (!LaunchHomeApp(ctx.launch_app) && ctx.cell != nullptr) {
+            lv_obj_remove_state(ctx.cell, LV_STATE_PRESSED);
+        }
         return;
     }
     if (ctx.cell != nullptr) {

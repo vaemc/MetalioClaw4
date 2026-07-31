@@ -1,5 +1,5 @@
-#ifndef _NO_AUDIO_CODEC_H
-#define _NO_AUDIO_CODEC_H
+#ifndef _BT_AUDIO_CODEC_H
+#define _BT_AUDIO_CODEC_H
 
 #include "audio_codec.h"
 
@@ -24,4 +24,4 @@ public:
 };
 
 
-#endif // _NO_AUDIO_CODEC_H
+#endif // _BT_AUDIO_CODEC_H
