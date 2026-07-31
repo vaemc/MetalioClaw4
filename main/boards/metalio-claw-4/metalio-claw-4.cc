@@ -48,8 +48,10 @@
 #include "SdCardManager.hpp"
 #include "usb_virtual_disk.h"
 #include "bq27220_gauge.h"
+#include "cx25601n.h"
 #include "bt_audio_codec.h"
 #include "display/screen/bluetooth_screen/bluetooth_screen.h"
+#include "settings.h"
 
 #include "driver/temperature_sensor.h"
 #include "esp_timer.h"
@@ -508,6 +510,35 @@ private:
         }
     }
 
+    // CX25601N 充电 IC（I2C 0x6B）。老设备无此芯片，probe 失败则跳过。
+    void InitializeCx25601n() {
+        esp_err_t probe = i2c_master_probe(i2c_bus_, CX25601N_I2C_ADDR, 100);
+        if (probe != ESP_OK) {
+            ESP_LOGI(TAG, "CX25601N not found at 0x%02X (legacy board?), skip init",
+                     CX25601N_I2C_ADDR);
+            return;
+        }
+        esp_err_t err = cx25601n_init(i2c_bus_);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "CX25601N found at 0x%02X but init failed: %s", CX25601N_I2C_ADDR,
+                     esp_err_to_name(err));
+            return;
+        }
+        // 应用设置里保存的充电电流（默认快速充电 1000mA）
+        Settings charge_settings("charge");
+        int ichg_ma = charge_settings.GetInt("ichg_ma", 1000);
+        if (ichg_ma != 500 && ichg_ma != 1000) {
+            ichg_ma = 1000;
+        }
+        err = cx25601n_set_ichg_ma(static_cast<uint32_t>(ichg_ma));
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "CX25601N set ichg=%d failed: %s", ichg_ma, esp_err_to_name(err));
+        } else {
+            ESP_LOGI(TAG, "CX25601N init OK at 0x%02X, ichg=%d mA", CX25601N_I2C_ADDR,
+                     ichg_ma);
+        }
+    }
+
     // 开机电量保护：读到 0% 且未在充电时，发 PWR_KEY_PULSE 序列强制关机。
     void CheckBatteryLevelAtBoot() {
         auto& gauge = Bq27220Gauge::GetInstance();
@@ -553,6 +584,7 @@ public:
         // 开机失败 Bq27220Gauge::GetBatteryLevel 内部会节流自愈，这里不需要
         // ESP_ERROR_CHECK。
         (void)Bq27220Gauge::GetInstance().Begin(i2c_bus_);
+        InitializeCx25601n();
         CheckBatteryLevelAtBoot();
         InitializeBTAudio();
         // SD 卡的 LDO（chan 4）在 InitializeSDWIFIPower() 里已经打开，这里

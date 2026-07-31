@@ -465,6 +465,51 @@
       "en-US": "Bluetooth"
     },
     {
+      "key": "CHARGE",
+      "zh-CN": "充电",
+      "en-US": "Charge"
+    },
+    {
+      "key": "CHARGE_SELECT_MODE",
+      "zh-CN": "选择充电电流",
+      "en-US": "Select charge current"
+    },
+    {
+      "key": "CHARGE_NORMAL",
+      "zh-CN": "正常充电",
+      "en-US": "Normal charge"
+    },
+    {
+      "key": "CHARGE_NORMAL_HINT",
+      "zh-CN": "500 mA",
+      "en-US": "500 mA"
+    },
+    {
+      "key": "CHARGE_FAST",
+      "zh-CN": "快速充电",
+      "en-US": "Fast charge"
+    },
+    {
+      "key": "CHARGE_FAST_HINT",
+      "zh-CN": "1000 mA",
+      "en-US": "1000 mA"
+    },
+    {
+      "key": "CHARGE_CURRENT",
+      "zh-CN": "当前档位",
+      "en-US": "Selected"
+    },
+    {
+      "key": "CHARGE_AUTO_SAVE",
+      "zh-CN": "充电设置会自动保存",
+      "en-US": "Charge settings are saved automatically"
+    },
+    {
+      "key": "CHARGE_CHIP_ABSENT",
+      "zh-CN": "当前设备无充电芯片，无法调节电流",
+      "en-US": "No charge IC on this device; current cannot be changed"
+    },
+    {
       "key": "SETTINGS",
       "zh-CN": "设置",
       "en-US": "Settings"
