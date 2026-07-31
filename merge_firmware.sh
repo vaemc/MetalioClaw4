@@ -4,10 +4,10 @@
 # 输出：firmware/Metalio_Claw4_{PROJECT_VER}.bin + 根目录 Metalio_Claw4_Latest.bin
 #
 # 用法:
-#   ./merge_firmware.sh           # 仅编译+合并
-#   ./merge_firmware.sh --upload  # 上传已屏蔽，不会实际上传
+#   ./merge_firmware.sh           # 仅编译+合并（默认不上传）
+#   ./merge_firmware.sh --upload  # 合并后上传到服务器
 #   ./merge_firmware.sh -u
-#   IDF_PATH=~/esp/v5.5.4 ./merge_firmware.sh
+#   IDF_PATH=~/esp/v5.5.4 ./merge_firmware.sh --upload
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,18 +15,15 @@ cd "$SCRIPT_DIR"
 
 FIRMWARE_DIR="firmware"
 DO_UPLOAD=0
-# 本地调试：强制关闭上传（即使传 -u/--upload 也不上传）
-UPLOAD_DISABLED=1
 
 usage() {
   cat <<'EOF'
 用法: ./merge_firmware.sh [选项]
 
   默认只编译并合并固件，不上传。
-  当前上传功能已屏蔽。
 
 选项:
-  -u, --upload   （已屏蔽）合并完成后上传 Metalio_Claw4_Latest.bin
+  -u, --upload   合并完成后上传 Metalio_Claw4_Latest.bin
   -h, --help     显示帮助
 EOF
 }
@@ -259,13 +256,7 @@ main() {
   echo "[done] ${SCRIPT_DIR}/${out} (${size} bytes)"
   echo "[done] ${SCRIPT_DIR}/${latest}"
 
-  if [[ "$UPLOAD_DISABLED" -eq 1 ]]; then
-    if [[ "$DO_UPLOAD" -eq 1 ]]; then
-      echo "[upload] 已屏蔽：忽略 -u/--upload，不上传"
-    else
-      echo "[upload] 已屏蔽，跳过上传"
-    fi
-  elif [[ "$DO_UPLOAD" -eq 1 ]]; then
+  if [[ "$DO_UPLOAD" -eq 1 ]]; then
     upload_firmware "$latest"
   else
     echo "[upload] 已跳过（需要上传请加 -u / --upload）"
