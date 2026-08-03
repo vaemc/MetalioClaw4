@@ -283,14 +283,6 @@ void AudioService::AudioOutputTask() {
         /* Update the last output time */
         last_output_time_ = std::chrono::steady_clock::now();
         debug_statistics_.playback_count++;
-
-#if CONFIG_USE_SERVER_AEC
-        /* Record the timestamp for server AEC */
-        if (task->timestamp > 0) {
-            lock.lock();
-            timestamp_queue_.push_back(task->timestamp);
-        }
-#endif
     }
 
     xEventGroupClearBits(event_group_, AS_EVENT_OUTPUT_TASK_RUNNING);
@@ -401,16 +393,6 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
     /* Push the task to the encode queue */
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
 
-    /* If the task is to send queue, we need to set the timestamp */
-    if (type == kAudioTaskTypeEncodeToSendQueue && !timestamp_queue_.empty()) {
-        if (timestamp_queue_.size() <= MAX_TIMESTAMPS_IN_QUEUE) {
-            task->timestamp = timestamp_queue_.front();
-        } else {
-            ESP_LOGW(TAG, "Timestamp queue (%u) is full, dropping timestamp", timestamp_queue_.size());
-        }
-        timestamp_queue_.pop_front();
-    }
-
     audio_queue_cv_.wait(lock, [this]() { return audio_encode_queue_.size() < MAX_ENCODE_TASKS_IN_QUEUE; });
     audio_encode_queue_.push_back(std::move(task));
     audio_queue_cv_.notify_all();
@@ -464,6 +446,7 @@ void AudioService::EnableWakeWordDetection(bool enable) {
         return;
     }
 
+    std::lock_guard<std::mutex> lock(wake_word_mutex_);
     ESP_LOGD(TAG, "%s wake word detection", enable ? "Enabling" : "Disabling");
     if (enable) {
         if (!wake_word_initialized_) {
@@ -476,8 +459,9 @@ void AudioService::EnableWakeWordDetection(bool enable) {
         wake_word_->Start();
         xEventGroupSetBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
     } else {
-        wake_word_->Stop();
+        // 先停 InputTask Feed，再 Stop detection，避免与 AFE 内部锁打架。
         xEventGroupClearBits(event_group_, AS_EVENT_WAKE_WORD_RUNNING);
+        wake_word_->Stop();
     }
 }
 
@@ -487,6 +471,8 @@ void AudioService::EnableVoiceProcessing(bool enable) {
         if (!audio_processor_initialized_) {
             audio_processor_->Initialize(codec_, OPUS_FRAME_DURATION_MS, models_list_);
             audio_processor_initialized_ = true;
+            // 应用开机/菜单里缓存的打断偏好（此时唤醒词已停，避免双 AFE 占满 PSRAM）
+            audio_processor_->EnableDeviceAec(device_aec_enabled_);
         }
 
         /* We should make sure no audio is playing */
@@ -514,12 +500,14 @@ void AudioService::EnableAudioTesting(bool enable) {
 }
 
 void AudioService::EnableDeviceAec(bool enable) {
-    ESP_LOGI(TAG, "%s device AEC", enable ? "Enabling" : "Disabling");
+    device_aec_enabled_ = enable;
     if (!audio_processor_initialized_) {
-        audio_processor_->Initialize(codec_, OPUS_FRAME_DURATION_MS, models_list_);
-        audio_processor_initialized_ = true;
+        // 空闲态只有唤醒词 AFE；此时创建通信 AFE（含 AEC）会与 WakeNet 抢 PSRAM 导致崩溃
+        ESP_LOGI(TAG, "device AEC preference %s (deferred until voice processing)",
+                 enable ? "on" : "off");
+        return;
     }
-
+    ESP_LOGI(TAG, "%s device AEC", enable ? "Enabling" : "Disabling");
     audio_processor_->EnableDeviceAec(enable);
 }
 
@@ -634,7 +622,6 @@ bool AudioService::IsIdle() {
 void AudioService::ResetDecoder() {
     std::lock_guard<std::mutex> lock(audio_queue_mutex_);
     opus_decoder_->ResetState();
-    timestamp_queue_.clear();
     audio_decode_queue_.clear();
     audio_playback_queue_.clear();
     audio_testing_queue_.clear();

@@ -156,7 +156,7 @@ LVAdapterDisplay::LVAdapterDisplay(const esp_lcd_panel_handle_t panel,
         esp_lv_adapter_unlock();
     }
 
-    // Application::GetInstance().ForceReturnToIdle();
+    // Application::GetInstance().ScheduleStopVoiceUiSession();  // legacy ForceReturnToIdle removed
 }
 
 void LVAdapterDisplay::SetupUI() {

@@ -330,8 +330,11 @@ void RestoreWakeWordIfNeeded() {
     if (!s_wake_disabled_by_us) {
         return;
     }
-    Application::GetInstance().GetAudioService().EnableWakeWordDetection(true);
     s_wake_disabled_by_us = false;
+    // 仅语音 UI 会话内才恢复唤醒词。
+    if (Application::GetInstance().IsVoiceUiActive()) {
+        Application::GetInstance().GetAudioService().EnableWakeWordDetection(true);
+    }
 }
 
 void FormatTimer(char* buf, size_t buf_size, int total_sec) {

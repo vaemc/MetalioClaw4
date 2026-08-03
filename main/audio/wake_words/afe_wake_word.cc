@@ -37,6 +37,12 @@ AfeWakeWord::~AfeWakeWord() {
 }
 
 bool AfeWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
+    // 禁止重入：并发 EnableWakeWordDetection 会双建 AFE / detection task → spinlock 崩。
+    if (afe_data_ != nullptr) {
+        ESP_LOGW(TAG, "Initialize skipped: already initialized");
+        return true;
+    }
+
     codec_ = codec;
     int ref_num = codec_->input_reference() ? 1 : 0;
 
@@ -100,9 +106,8 @@ void AfeWakeWord::Start() {
 
 void AfeWakeWord::Stop() {
     xEventGroupClearBits(event_group_, DETECTION_RUNNING_EVENT);
-    if (afe_data_ != nullptr) {
-        afe_iface_->reset_buffer(afe_data_);
-    }
+    // 不在 Stop 里 reset_buffer：可与 InputTask::Feed / fetch 并发踩 AFE 内部锁。
+    // 停 Feed 靠 AudioService 先清 AS_EVENT_WAKE_WORD_RUNNING。
 }
 
 void AfeWakeWord::Feed(const std::vector<int16_t>& data) {

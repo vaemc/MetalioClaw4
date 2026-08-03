@@ -390,6 +390,16 @@
       "en-US": "Clear"
     },
     {
+      "key": "CHAT_INTERRUPT_ON",
+      "zh-CN": "打断：开",
+      "en-US": "Barge-in: On"
+    },
+    {
+      "key": "CHAT_INTERRUPT_OFF",
+      "zh-CN": "打断：关",
+      "en-US": "Barge-in: Off"
+    },
+    {
       "key": "PHONE",
       "zh-CN": "电话",
       "en-US": "Phone"

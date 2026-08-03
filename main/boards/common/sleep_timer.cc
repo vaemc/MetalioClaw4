@@ -108,7 +108,7 @@ void SleepTimer::CheckTimer() {
                 WakeUp();
             });
 
-            if (is_wake_word_running) {
+            if (is_wake_word_running && app.IsVoiceUiActive()) {
                 audio_service.EnableWakeWordDetection(true);
             }
         }

@@ -29,7 +29,6 @@
 enum AecMode {
     kAecOff,
     kAecOnDeviceSide,
-    kAecOnServerSide,
 };
 
 class Application {
@@ -64,16 +63,28 @@ public:
     void PlaySound(const std::string_view& sound);
     AudioService& GetAudioService() { return audio_service_; }
 
+    // 语音 UI 会话（聊天页 / 数字人页）：唤醒词仅在会话内开启。
+    // 页面侧请用 Schedule*，勿在 LVGL worker 里同步跑重逻辑。
+    // Stop 带 epoch：聊天↔数字人切换时，后到的 Start 会使旧 Stop 失效，避免会话被误关。
+    void StartVoiceUiSession();
+    void StopVoiceUiSession(uint32_t epoch);
+    void ScheduleStartVoiceUiSession();
+    void ScheduleStopVoiceUiSession();
+    bool IsVoiceUiActive() const { return voice_ui_active_; }
+    uint32_t VoiceUiEpoch() const { return voice_ui_epoch_; }
+
     bool HasPendingActivation() const {
         return !activation_suspended_ && !pending_activation_code_.empty();
     }
     const std::string& GetPendingActivationCode() const { return pending_activation_code_; }
+    // 启动流水线已走到 Idle，且当前无需等待激活码 / 不在 activating。
+    bool IsDeviceActivated() const;
+    bool IsBootReady() const { return boot_ready_; }
     void SetActivationSuspended(bool suspended);
     bool IsActivationSuspended() const { return activation_suspended_; }
     void StopSystemAudioForStressTest();
     void RestoreSystemAudioAfterStressTest();
 
-    void ForceReturnToIdle();
 private:
     Application();
     ~Application();
@@ -90,6 +101,12 @@ private:
     AudioService audio_service_;
     std::string pending_activation_code_;
     volatile bool activation_suspended_ = false;
+    // 仅在 Application::Start() 末尾首次进入 Idle 后置位；starting/activating 期间为 false。
+    volatile bool boot_ready_ = false;
+    // 聊天/数字人页持有的对话会话；false 时 Idle 不得开唤醒词。
+    volatile bool voice_ui_active_ = false;
+    // Start 递增；ScheduleStop 捕获当时的 epoch，过期则跳过。
+    uint32_t voice_ui_epoch_ = 0;
 
     bool has_server_time_ = false;
     bool aborted_ = false;
@@ -102,6 +119,8 @@ private:
     void CheckAssetsVersion();
     void ShowActivationCode(const std::string& code, const std::string& message);
     void SetListeningMode(ListeningMode mode);
+    // 从 NVS 恢复「打断」偏好到 aec_mode_，并同步到音频处理器（开机静默，不弹通知）。
+    void ApplyInterruptPreferenceFromNvs();
 };
 
 

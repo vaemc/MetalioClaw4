@@ -198,20 +198,6 @@ config USE_AUDIO_PROCESSOR
     help
         Requires ESP32 S3 and PSRAM
 
-config USE_DEVICE_AEC
-    bool "Enable Device-Side AEC"
-    default n
-    depends on USE_AUDIO_PROCESSOR && BOARD_TYPE_METALIO_CLAW_4
-    help
-        To work properly, device-side AEC requires a clean output reference path from the speaker signal and physical acoustic isolation between the microphone and speaker.
-
-config USE_SERVER_AEC
-    bool "Enable Server-Side AEC (Unstable)"
-    default n
-    depends on USE_AUDIO_PROCESSOR
-    help
-        To work perperly, server-side AEC requires server support
-
 config USE_AUDIO_DEBUGGER
     bool "Enable Audio Debugger"
     default n

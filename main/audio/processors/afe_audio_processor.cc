@@ -56,13 +56,9 @@ void AfeAudioProcessor::Initialize(AudioCodec* codec, int frame_duration_ms, srm
     afe_config->agc_init = false;
     afe_config->memory_alloc_mode = AFE_MEMORY_ALLOC_MORE_PSRAM;
 
-#ifdef CONFIG_USE_DEVICE_AEC
+    // AEC 模块预创建，运行时由 EnableDeviceAec() 在 AEC/VAD 间切换（勿与唤醒词 AFE 同时常驻）
     afe_config->aec_init = true;
     afe_config->vad_init = false;
-#else
-    afe_config->aec_init = false;
-    afe_config->vad_init = true;
-#endif
 
     afe_iface_ = esp_afe_handle_from_config(afe_config);
     afe_data_ = afe_iface_->create_from_config(afe_config);
@@ -173,13 +169,13 @@ void AfeAudioProcessor::AudioProcessorTask() {
 }
 
 void AfeAudioProcessor::EnableDeviceAec(bool enable) {
+    if (afe_iface_ == nullptr || afe_data_ == nullptr) {
+        ESP_LOGE(TAG, "EnableDeviceAec: AFE not initialized");
+        return;
+    }
     if (enable) {
-#if CONFIG_USE_DEVICE_AEC
         afe_iface_->disable_vad(afe_data_);
         afe_iface_->enable_aec(afe_data_);
-#else
-        ESP_LOGE(TAG, "Device AEC is not supported");
-#endif
     } else {
         afe_iface_->disable_aec(afe_data_);
         afe_iface_->enable_vad(afe_data_);

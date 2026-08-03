@@ -41,7 +41,6 @@
 #define MAX_DECODE_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)
 #define MAX_SEND_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)
 #define AUDIO_TESTING_MAX_DURATION_MS 10000
-#define MAX_TIMESTAMPS_IN_QUEUE 3
 
 #define AUDIO_POWER_TIMEOUT_MS 15000
 #define AUDIO_POWER_CHECK_INTERVAL_MS 1000
@@ -147,14 +146,14 @@ private:
     std::deque<std::unique_ptr<AudioStreamPacket>> audio_testing_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_encode_queue_;
     std::deque<std::unique_ptr<AudioTask>> audio_playback_queue_;
-    // For server AEC
-    std::deque<uint32_t> timestamp_queue_;
 
     bool wake_word_initialized_ = false;
     bool audio_processor_initialized_ = false;
+    bool device_aec_enabled_ = false;  // 偏好；等语音处理器创建后再落到 AFE
     bool voice_detected_ = false;
     bool service_stopped_ = true;
     bool audio_input_need_warmup_ = false;
+    std::mutex wake_word_mutex_;
 
     esp_timer_handle_t audio_power_timer_ = nullptr;
     std::chrono::steady_clock::time_point last_input_time_;
