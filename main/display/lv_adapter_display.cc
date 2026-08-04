@@ -129,7 +129,8 @@ LVAdapterDisplay::LVAdapterDisplay(const esp_lcd_panel_handle_t panel,
     esp_lv_adapter_touch_config_t touch_cfg =
         ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, touch_handle);
     lv_indev_t* touch_indev = esp_lv_adapter_register_touch(&touch_cfg);
-    touch_feed_init(touch_handle, 20);
+    // 40ms：与电源键/电量计共享 I2C，20ms 轮询易在总线抖动时拖垮 GT911/TCA/BQ
+    touch_feed_init(touch_handle, 40);
     touch_feed_attach_indev(touch_indev);
 
     ESP_ERROR_CHECK(esp_lv_adapter_start());
@@ -156,7 +157,7 @@ LVAdapterDisplay::LVAdapterDisplay(const esp_lcd_panel_handle_t panel,
         esp_lv_adapter_unlock();
     }
 
-    // Application::GetInstance().ForceReturnToIdle();
+    // Application::GetInstance().ScheduleStopVoiceUiSession();  // legacy ForceReturnToIdle removed
 }
 
 void LVAdapterDisplay::SetupUI() {

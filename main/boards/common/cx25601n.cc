@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "freertos/task.h"
 
 namespace {
 
@@ -21,6 +22,10 @@ constexpr uint8_t REG_VREG_LO    = 0x04;
 constexpr uint8_t REG_VREG_HI    = 0x05;
 constexpr uint8_t REG_IINDPM_LO  = 0x06;
 constexpr uint8_t REG_IINDPM_HI  = 0x07;
+constexpr uint8_t REG_IOTG_LO    = 0x0A; /* IOTG[3:0] @ [7:4] */
+constexpr uint8_t REG_IOTG_HI    = 0x0B; /* IOTG[7:4] @ [3:0] */
+constexpr uint8_t REG_VOTG_LO    = 0x0C; /* VOTG[1:0] @ [7:6] */
+constexpr uint8_t REG_VOTG_HI    = 0x0D; /* VOTG[6:2] @ [4:0] */
 constexpr uint8_t REG_IPRECHG_LO = 0x10;
 constexpr uint8_t REG_IPRECHG_HI = 0x11;
 constexpr uint8_t REG_ITERM_LO   = 0x12;
@@ -28,9 +33,12 @@ constexpr uint8_t REG_ITERM_HI   = 0x13;
 constexpr uint8_t REG_CHG_CTRL0  = 0x14;
 constexpr uint8_t REG_CHG_TMR    = 0x15;
 constexpr uint8_t REG_CHG_CTRL1  = 0x16; /* EN_HIZ bit4, EN_CHG bit5, WDT[1:0] */
+constexpr uint8_t REG_CHG_CTRL3  = 0x18; /* EN_OTG bit6, BATFET_DLY bit2 */
 constexpr uint8_t REG_PART_INFO  = 0x38;
 constexpr uint8_t REG_STATUS1    = 0x1E;
 constexpr uint8_t REG_UNLOCK     = 0x70;
+
+constexpr int OTG_ENTRY_DELAY_MS = 30;
 
 constexpr int I2C_TIMEOUT_MS = 100;
 
@@ -127,6 +135,64 @@ esp_err_t set_iindpm_ma_nolock(uint32_t ma)
     return err;
 }
 
+esp_err_t set_votg_mv_nolock(uint32_t mv)
+{
+    if (mv < CX25601N_VOTG_MIN_MV) {
+        mv = CX25601N_VOTG_MIN_MV;
+    }
+    if (mv > CX25601N_VOTG_MAX_MV) {
+        mv = CX25601N_VOTG_MAX_MV;
+    }
+    uint32_t code = mv / CX25601N_VOTG_STEP_MV;
+    if (code < 0x30) {
+        code = 0x30;
+    }
+    if (code > 0x42) {
+        code = 0x42;
+    }
+
+    /* VOTG[1:0] @ 0x0C[7:6], VOTG[6:2] @ 0x0D[4:0] */
+    esp_err_t err = update_bits(REG_VOTG_LO, 0x03, 6, static_cast<uint8_t>(code & 0x03));
+    if (err == ESP_OK) {
+        err = update_bits(REG_VOTG_HI, 0x1F, 0, static_cast<uint8_t>((code >> 2) & 0x1F));
+    }
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "set VOTG=%lu mV (code=0x%02lX)",
+                 static_cast<unsigned long>(code * CX25601N_VOTG_STEP_MV),
+                 static_cast<unsigned long>(code));
+    }
+    return err;
+}
+
+esp_err_t set_iotg_ma_nolock(uint32_t ma)
+{
+    if (ma < CX25601N_IOTG_MIN_MA) {
+        ma = CX25601N_IOTG_MIN_MA;
+    }
+    if (ma > CX25601N_IOTG_MAX_MA) {
+        ma = CX25601N_IOTG_MAX_MA;
+    }
+    uint32_t code = ma / CX25601N_IOTG_STEP_MA;
+    if (code < 5) {
+        code = 5;
+    }
+    if (code > 60) {
+        code = 60;
+    }
+
+    /* IOTG[3:0] @ 0x0A[7:4], IOTG[7:4] @ 0x0B[3:0] */
+    esp_err_t err = update_bits(REG_IOTG_LO, 0x0F, 4, static_cast<uint8_t>(code & 0x0F));
+    if (err == ESP_OK) {
+        err = update_bits(REG_IOTG_HI, 0x0F, 0, static_cast<uint8_t>((code >> 4) & 0x0F));
+    }
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "set IOTG=%lu mA (code=0x%02lX)",
+                 static_cast<unsigned long>(code * CX25601N_IOTG_STEP_MA),
+                 static_cast<unsigned long>(code));
+    }
+    return err;
+}
+
 esp_err_t hw_init_defaults(void)
 {
     /* 上电关闭 D+/D- 自动识别，避免被判定为 SDP 后限流 500mA */
@@ -158,7 +224,7 @@ esp_err_t hw_init_defaults(void)
     unlock_private(false);
 
     update_bits(REG_CHG_CTRL0, 0x01, 0, 1);
-    update_bits(0x18, 0x01, 2, 0);
+    update_bits(REG_CHG_CTRL3, 0x01, 2, 0); /* BATFET_DLY=0；EN_OTG 保持默认关闭 */
     update_bits(0x1A, 0x01, 7, 1);
     update_bits(0x23, 0x07, 2, 0x07);
     update_bits(0x24, 0x01, 3, 1);
@@ -186,7 +252,7 @@ esp_err_t cx25601n_init(i2c_master_bus_handle_t bus)
     i2c_device_config_t dev_cfg = {};
     dev_cfg.dev_addr_length = I2C_ADDR_BIT_LEN_7;
     dev_cfg.device_address = CX25601N_I2C_ADDR;
-    dev_cfg.scl_speed_hz = 400000;
+    dev_cfg.scl_speed_hz = 200000;
 
     esp_err_t err = i2c_master_bus_add_device(bus, &dev_cfg, &s_dev);
     if (err != ESP_OK) {
@@ -255,6 +321,71 @@ esp_err_t cx25601n_is_charge_enabled(bool *enabled)
     uint8_t bit = 0;
     xSemaphoreTake(s_lock, portMAX_DELAY);
     esp_err_t err = read_bits(REG_CHG_CTRL1, 0x01, 5, &bit);
+    xSemaphoreGive(s_lock);
+    if (err == ESP_OK) {
+        *enabled = bit != 0;
+    }
+    return err;
+}
+
+esp_err_t cx25601n_enable_otg(bool enable)
+{
+    if (!s_ready) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    esp_err_t err = ESP_OK;
+
+    if (enable) {
+        /* 对齐 cx2560x st_cx25601_set_otg_en / enable_vbus：先关充电，再配 5V/1A，最后开 EN_OTG */
+        err = update_bits(REG_CHG_CTRL1, 0x01, 5, 0); /* EN_CHG=0 */
+        if (err == ESP_OK) {
+            err = update_bits(REG_CHG_CTRL1, 0x01, 4, 0); /* EN_HIZ=0 */
+        }
+        if (err == ESP_OK) {
+            err = set_votg_mv_nolock(CX25601N_OTG_DEFAULT_MV);
+        }
+        if (err == ESP_OK) {
+            err = set_iotg_ma_nolock(CX25601N_OTG_DEFAULT_MA);
+        }
+        if (err == ESP_OK) {
+            err = update_bits(REG_CHG_CTRL3, 0x01, 6, 1); /* EN_OTG=1 */
+        }
+        xSemaphoreGive(s_lock);
+
+        if (err == ESP_OK) {
+            /* 手册：EN_OTG=1 后至少 30ms 才进入 Boost */
+            vTaskDelay(pdMS_TO_TICKS(OTG_ENTRY_DELAY_MS));
+            ESP_LOGI(TAG, "OTG ON (target %dmV/%dmA)",
+                     CX25601N_OTG_DEFAULT_MV, CX25601N_OTG_DEFAULT_MA);
+        } else {
+            ESP_LOGE(TAG, "OTG enable failed: %s", esp_err_to_name(err));
+        }
+        return err;
+    }
+
+    err = update_bits(REG_CHG_CTRL3, 0x01, 6, 0); /* EN_OTG=0 */
+    if (err == ESP_OK) {
+        err = update_bits(REG_CHG_CTRL1, 0x01, 5, 1); /* 恢复充电，对齐例程 */
+    }
+    xSemaphoreGive(s_lock);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "OTG OFF (charge restored)");
+    } else {
+        ESP_LOGE(TAG, "OTG disable failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+esp_err_t cx25601n_is_otg_enabled(bool *enabled)
+{
+    if (!s_ready || !enabled) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    uint8_t bit = 0;
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    esp_err_t err = read_bits(REG_CHG_CTRL3, 0x01, 6, &bit);
     xSemaphoreGive(s_lock);
     if (err == ESP_OK) {
         *enabled = bit != 0;

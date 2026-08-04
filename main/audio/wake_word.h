@@ -13,6 +13,8 @@ public:
     virtual ~WakeWord() = default;
     
     virtual bool Initialize(AudioCodec* codec, srmodel_list_t* models_list) = 0;
+    // 释放底层引擎（如 AFE 实例及其内部任务）。下次 Initialize 再创建。
+    virtual void Deinitialize() {}
     virtual void Feed(const std::vector<int16_t>& data) = 0;
     virtual void OnWakeWordDetected(std::function<void(const std::string& wake_word)> callback) = 0;
     virtual void Start() = 0;

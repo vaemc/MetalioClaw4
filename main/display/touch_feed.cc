@@ -8,12 +8,14 @@
 namespace {
 
 constexpr const char* kTag = "TouchFeed";
+constexpr uint32_t kDefaultPeriodMs = 40;
+constexpr uint32_t kMaxBackoffMs = 400;
 
 esp_lcd_touch_handle_t s_handle = nullptr;
 SemaphoreHandle_t s_mutex = nullptr;
 TaskHandle_t s_task = nullptr;
 volatile bool s_run = false;
-uint32_t s_period_ms = 20;
+uint32_t s_period_ms = kDefaultPeriodMs;
 
 struct TouchSnapshot {
     bool pressed = false;
@@ -53,23 +55,23 @@ void LogSnapshotIfChanged(const TouchSnapshot& next) {
 }
 #endif
 
-void UpdateSnapshotFromChip() {
-    TouchSnapshot next = s_snap;
-
+// 返回 true 表示本轮 I2C 读成功。
+bool UpdateSnapshotFromChip() {
     if (s_handle == nullptr) {
-        return;
+        return false;
     }
 
     if (esp_lcd_touch_read_data(s_handle) != ESP_OK) {
-        return;
+        return false;
     }
 
     esp_lcd_touch_point_data_t points[1] = {};
     uint8_t cnt = 0;
     if (esp_lcd_touch_get_data(s_handle, points, &cnt, 1) != ESP_OK) {
-        return;
+        return false;
     }
 
+    TouchSnapshot next = s_snap;
     if (cnt > 0) {
         next.pressed = true;
         next.x = static_cast<int16_t>(points[0].x);
@@ -87,17 +89,35 @@ void UpdateSnapshotFromChip() {
 #if TOUCH_FEED_DEBUG
     LogSnapshotIfChanged(next);
 #endif
+    return true;
 }
 
 void ReaderTask(void* /*arg*/) {
     const uint32_t period_ms = s_period_ms;
+    uint32_t consecutive_err = 0;
 #if TOUCH_FEED_DEBUG
     ESP_LOGI(kTag, "reader started, period=%u ms", period_ms);
 #endif
 
     while (s_run) {
-        UpdateSnapshotFromChip();
-        vTaskDelay(pdMS_TO_TICKS(period_ms));
+        if (UpdateSnapshotFromChip()) {
+            consecutive_err = 0;
+            vTaskDelay(pdMS_TO_TICKS(period_ms));
+        } else {
+            // 总线异常时拉长间隔，避免 clear-bus 失败后继续狂刷
+            if (consecutive_err < 8) {
+                consecutive_err++;
+            }
+            uint32_t backoff = period_ms << (consecutive_err > 3 ? 3 : consecutive_err);
+            if (backoff > kMaxBackoffMs) {
+                backoff = kMaxBackoffMs;
+            }
+            if (consecutive_err == 1 || consecutive_err == 4 || consecutive_err == 8) {
+                ESP_LOGW(kTag, "I2C read fail, backoff %u ms (n=%u)", backoff,
+                         consecutive_err);
+            }
+            vTaskDelay(pdMS_TO_TICKS(backoff));
+        }
     }
 
     s_task = nullptr;
@@ -129,7 +149,7 @@ void touch_feed_init(esp_lcd_touch_handle_t handle, uint32_t period_ms) {
     touch_feed_stop();
 
     s_handle = handle;
-    s_period_ms = (period_ms == 0) ? 20 : period_ms;
+    s_period_ms = (period_ms == 0) ? kDefaultPeriodMs : period_ms;
 
     if (s_mutex == nullptr) {
         s_mutex = xSemaphoreCreateMutex();

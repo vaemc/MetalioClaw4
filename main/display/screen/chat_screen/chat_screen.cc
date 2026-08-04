@@ -27,10 +27,10 @@ constexpr const char* TAG = "ChatScreen";
 // 720x720 视觉参数
 //
 //   ┌───────────────────────────────────────────┐ 0
-//   │ Header  [←] 聊天 待唤醒  [表情][聊天][清空] │ 88
+//   │ Header  [←] 聊天 待唤醒              [☰] │ 88  （表情模式可点空白显隐）
 //   ├───────────────────────────────────────────┤
 //   │  聊天模式：左右气泡列表                     │
-//   │  表情模式：EAF 偏上 + 底部白色字幕           │
+//   │  表情模式：EAF 全屏居中 + 底部字幕叠加       │
 //   └───────────────────────────────────────────┘ 720
 // ---------------------------------------------------------------------------
 constexpr int32_t kPanelW          = 720;
@@ -46,15 +46,13 @@ constexpr int32_t kBubblePadY      = 14;
 constexpr int32_t kBubbleRadius    = 18;
 constexpr int32_t kSideMargin      = 8;
 constexpr int32_t kMaxMessages     = 12;
-constexpr int32_t kToggleBtnSize   = 80;
-constexpr int32_t kToggleIconSize  = 64;
-constexpr int32_t kToggleBtnMargin = 40;
-constexpr int32_t kClearBtnW       = 110;
-constexpr int32_t kClearBtnH       = 56;
-constexpr int32_t kModeBtnW        = 100;
-constexpr int32_t kModeBtnH        = 56;
-constexpr int32_t kHeaderRightPad  = 20;
-constexpr int32_t kHeaderCtrlGap   = 10;
+constexpr int32_t kHeaderRightPad  = 16;
+constexpr int32_t kMenuBtnSize     = 72;
+constexpr int32_t kMenuIconSize    = 40;
+constexpr int32_t kMenuPanelW      = 220;
+constexpr int32_t kMenuItemH       = 64;
+constexpr int32_t kMenuPanelRadius = 16;
+constexpr int32_t kMenuPanelGap    = 4;  // 相对 header 底边下探
 
 // 表情：服务器完整情绪名 → S:/sdcard/system/chat/{emotion}.eaf
 constexpr const char* kEmotionDir      = "S:/sdcard/system/chat/";
@@ -67,8 +65,7 @@ constexpr uint32_t kEmotionFrameDelayMs = 30;  // 与 boot_screen 一致
 
 constexpr int32_t kEmotionBubbleBorder = 0;
 constexpr int32_t kEmotionBubbleSide   = 24;
-constexpr int32_t kCaptionBottom       = 36;   // 底部字幕距底边
-constexpr int32_t kEmotionEafLift      = 90;   // EAF 相对中心上移，给底部字幕留空
+constexpr int32_t kCaptionBottom       = 36;   // 底部字幕距底边（叠加，不挤 EAF）
 constexpr int32_t kEmotionBubbleMaxW   = kPanelW - kEmotionBubbleSide * 2;
 
 constexpr uint32_t kColorBg                 = 0x0E1116;
@@ -80,6 +77,7 @@ constexpr uint32_t kColorHeaderBtnBorder    = 0x3B4556;
 constexpr uint32_t kColorHeaderBtnText      = 0xE5E7EB;
 constexpr uint32_t kColorModeSelectedBg     = 0x1E3A2F;
 constexpr uint32_t kColorModeSelectedBorder = 0x34D399;
+constexpr uint32_t kColorMenuPanelBg        = 0x1B2030;
 constexpr uint32_t kColorLeftBubble         = 0x202736;
 constexpr uint32_t kColorRightBubble        = 0x1E3A2F;
 constexpr uint32_t kColorRightBubbleText    = 0xE8F5E9;
@@ -89,8 +87,6 @@ constexpr uint32_t kColorStateIdle          = 0x9AA3B2;
 constexpr uint32_t kColorStateListening     = 0x34D399;
 constexpr uint32_t kColorStateSpeaking      = 0x60A5FA;
 constexpr uint32_t kColorStateConnecting    = 0xFBBF24;
-constexpr uint32_t kColorToggleBtnBg        = 0xFFFFFF;
-constexpr uint32_t kColorToggleBtnPress     = 0xF0F0F0;
 constexpr uint32_t kColorEmotionBubbleBg    = 0x000000;
 constexpr uint32_t kColorEmotionBubbleText  = 0xFFFFFF;
 constexpr lv_opa_t kEmotionBubbleBgOpa      = LV_OPA_40;
@@ -101,11 +97,18 @@ enum class ViewMode : uint8_t { Chat, Emotion };
 
 struct UiState {
     lv_obj_t* screen           = nullptr;
+    lv_obj_t* header           = nullptr;
     lv_obj_t* msg_list         = nullptr;
     lv_obj_t* empty_hint       = nullptr;
     lv_obj_t* status_state_lbl = nullptr;
-    lv_obj_t* mode_emotion_btn = nullptr;
-    lv_obj_t* mode_chat_btn    = nullptr;
+    lv_obj_t* menu_btn         = nullptr;
+    lv_obj_t* menu_mask        = nullptr;
+    lv_obj_t* menu_panel       = nullptr;
+    lv_obj_t* menu_item_emotion = nullptr;
+    lv_obj_t* menu_item_chat    = nullptr;
+    lv_obj_t* menu_item_interrupt = nullptr;
+    lv_obj_t* menu_item_interrupt_lbl = nullptr;
+    lv_obj_t* menu_item_clear   = nullptr;
     lv_obj_t* emotion_panel    = nullptr;
     lv_obj_t* emotion_eaf      = nullptr;
     lv_obj_t* caption_bubble   = nullptr;  // 用户/系统共用一条底部字幕
@@ -119,6 +122,10 @@ UiState s_ui;
 DeviceState s_last_device_state = kDeviceStateUnknown;
 ViewMode s_view_mode = ViewMode::Chat;
 bool s_activation_blocked = false;
+bool s_activation_dialog_shows_code = false;
+bool s_header_visible = true;
+// 本页是否已 Acquire 语音会话；leave 幂等，避免 swipe+UNLOAD+UNLOADED 三次 Release。
+bool s_voice_ui_held = false;
 
 // 当前请求的情绪名；s_applied_emotion 记录已成功 set_src 的名字，避免重复加载。
 char s_current_emotion[kEmotionNameMax + 1] = "neutral";
@@ -191,8 +198,73 @@ void ApplyEmotionSrc(const char* emotion) {
     }
     lv_eaf_set_src(s_ui.emotion_eaf, BuildEmotionPath(name));
     lv_eaf_set_frame_delay(s_ui.emotion_eaf, kEmotionFrameDelayMs);
+    // set_src 后尺寸随原图变化，重新居中；不缩放。
+    lv_obj_center(s_ui.emotion_eaf);
     std::strncpy(s_applied_emotion, name, sizeof(s_applied_emotion) - 1);
     s_applied_emotion[sizeof(s_applied_emotion) - 1] = '\0';
+}
+
+void pause_emotion_eaf() {
+    if (s_ui.emotion_eaf != nullptr) {
+        lv_eaf_pause(s_ui.emotion_eaf);
+    }
+}
+
+void resume_emotion_eaf() {
+    if (s_ui.emotion_eaf != nullptr && lv_eaf_is_loaded(s_ui.emotion_eaf)) {
+        lv_eaf_resume(s_ui.emotion_eaf);
+    }
+}
+
+// 立即停掉表情动画并销毁控件（不能只靠 pause + delete_async）。
+void stop_emotion_eaf() {
+    if (s_ui.emotion_eaf == nullptr) {
+        return;
+    }
+    lv_eaf_pause(s_ui.emotion_eaf);
+    lv_obj_delete(s_ui.emotion_eaf);
+    s_ui.emotion_eaf = nullptr;
+    s_applied_emotion[0] = '\0';
+}
+
+void ensure_emotion_eaf() {
+    if (s_ui.emotion_eaf != nullptr || s_ui.emotion_panel == nullptr) {
+        return;
+    }
+    if (!SdCardManager::GetInstance().IsMounted()) {
+        return;
+    }
+    s_ui.emotion_eaf = lv_eaf_create(s_ui.emotion_panel);
+    lv_obj_center(s_ui.emotion_eaf);
+    screen_make_input_passive(s_ui.emotion_eaf);
+}
+
+bool is_device_activated();  // 前向声明
+void delete_timer(lv_timer_t*& timer);
+
+void schedule_voice_ui_start() {
+    if (s_voice_ui_held) {
+        return;
+    }
+    s_voice_ui_held = true;
+    Application::GetInstance().SetVoiceUiDesired(true);
+}
+
+void schedule_voice_ui_stop() {
+    if (!s_voice_ui_held) {
+        return;
+    }
+    s_voice_ui_held = false;
+    Application::GetInstance().SetVoiceUiDesired(false);
+}
+
+// 离开聊天页：先停 EAF，再 desired=false（立刻 destroy 唤醒词 AFE）。
+void chat_page_leave() {
+    // 离开时先停定时器，避免卸载过程中继续刷状态/轮询吃 CPU
+    delete_timer(s_ui.state_timer);
+    delete_timer(s_ui.activation_guard_timer);
+    stop_emotion_eaf();
+    schedule_voice_ui_stop();
 }
 
 // ---------------------------------------------------------------------------
@@ -451,24 +523,30 @@ void ShowEmotionCaption(const char* text) {
 // 设备激活检查
 // ---------------------------------------------------------------------------
 bool is_device_activated() {
-    auto& app = Application::GetInstance();
-    return !app.HasPendingActivation() &&
-           app.GetDeviceState() != kDeviceStateActivating;
+    return Application::GetInstance().IsDeviceActivated();
 }
 
 void log_activation_blocked() {
     auto& app = Application::GetInstance();
-    ESP_LOGW(TAG, "Chat blocked: device not activated");
+    ESP_LOGW(TAG, "Chat blocked: device not activated (boot_ready=%d pending=%d state=%d)",
+             app.IsBootReady() ? 1 : 0,
+             app.HasPendingActivation() ? 1 : 0,
+             static_cast<int>(app.GetDeviceState()));
     if (app.HasPendingActivation()) {
         ESP_LOGW(TAG, "pending activation code: %s",
                  app.GetPendingActivationCode().c_str());
     }
-    if (app.GetDeviceState() == kDeviceStateActivating) {
-        ESP_LOGW(TAG, "device state: activating");
-    }
 }
 
 void on_swipe_back();
+
+void close_activation_blocked_dialog() {
+    if (s_ui.activation_mask != nullptr) {
+        lv_obj_delete(s_ui.activation_mask);
+        s_ui.activation_mask = nullptr;
+    }
+    s_activation_dialog_shows_code = false;
+}
 
 void open_activation_blocked_dialog() {
     if (s_ui.screen == nullptr || s_ui.activation_mask != nullptr) {
@@ -477,6 +555,7 @@ void open_activation_blocked_dialog() {
 
     auto& app = Application::GetInstance();
     const bool has_code = app.HasPendingActivation();
+    s_activation_dialog_shows_code = has_code;
 
     constexpr int32_t kCardW = 520;
     const int32_t kCardH = has_code ? 420 : 340;
@@ -560,11 +639,40 @@ void ensure_activation_blocked_dialog() {
     }
 }
 
+void sync_activation_block_state() {
+    auto& app = Application::GetInstance();
+    const bool should_block = !is_device_activated();
+    const bool has_code = app.HasPendingActivation();
+    if (should_block == s_activation_blocked) {
+        if (should_block) {
+            // starting 时先弹出无码弹窗；激活码后到时需重建以显示验证码
+            if (has_code && !s_activation_dialog_shows_code) {
+                close_activation_blocked_dialog();
+                open_activation_blocked_dialog();
+            } else {
+                ensure_activation_blocked_dialog();
+            }
+        }
+        return;
+    }
+    s_activation_blocked = should_block;
+    if (should_block) {
+        log_activation_blocked();
+        open_activation_blocked_dialog();
+    } else {
+        ESP_LOGI(TAG, "Chat unblocked: device activated/ready");
+        close_activation_blocked_dialog();
+        // LOAD 时未激活则未 Start；激活完成后在此补上。
+        schedule_voice_ui_start();
+    }
+}
+
 void on_activation_guard_timer(lv_timer_t* /*timer*/) {
-    ensure_activation_blocked_dialog();
+    sync_activation_block_state();
 }
 
 bool reject_if_blocked() {
+    sync_activation_block_state();
     if (!s_activation_blocked) {
         return false;
     }
@@ -573,32 +681,30 @@ bool reject_if_blocked() {
 }
 
 // ---------------------------------------------------------------------------
-// 视图模式切换
+// 视图模式 + 顶栏下拉菜单
 // ---------------------------------------------------------------------------
-void style_header_btn(lv_obj_t* btn) {
+enum class MenuAction : uintptr_t {
+    Emotion   = 0,
+    Chat      = 1,
+    Clear     = 2,
+    Interrupt = 3,
+};
+
+void style_menu_item(lv_obj_t* btn, bool selected) {
     if (btn == nullptr) {
         return;
     }
-    lv_obj_set_style_radius(btn, 28, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(kColorHeaderBtn), LV_PART_MAIN);
+    lv_obj_set_style_radius(btn, 12, LV_PART_MAIN);
+    lv_obj_set_style_border_width(btn, selected ? 1 : 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(
+        btn, lv_color_hex(selected ? kColorModeSelectedBg : kColorHeaderBtn),
+        LV_PART_MAIN);
     lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(kColorHeaderBtnBorder),
+    lv_obj_set_style_border_color(btn, lv_color_hex(kColorModeSelectedBorder),
                                   LV_PART_MAIN);
-    lv_obj_set_style_border_width(btn, 1, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(btn, 0, LV_PART_MAIN);
     lv_obj_set_style_bg_color(btn, lv_color_hex(0x3B4556),
                               LV_PART_MAIN | LV_STATE_PRESSED);
-}
-
-void style_mode_btn(lv_obj_t* btn, bool selected) {
-    style_header_btn(btn);
-    if (btn == nullptr || !selected) {
-        return;
-    }
-    lv_obj_set_style_bg_color(btn, lv_color_hex(kColorModeSelectedBg),
-                              LV_PART_MAIN);
-    lv_obj_set_style_border_color(btn, lv_color_hex(kColorModeSelectedBorder),
-                                  LV_PART_MAIN);
 }
 
 void set_obj_hidden(lv_obj_t* obj, bool hidden) {
@@ -612,6 +718,69 @@ void set_obj_hidden(lv_obj_t* obj, bool hidden) {
     }
 }
 
+bool is_header_menu_open() {
+    return s_ui.menu_panel != nullptr &&
+           !lv_obj_has_flag(s_ui.menu_panel, LV_OBJ_FLAG_HIDDEN);
+}
+
+bool is_interrupt_enabled() {
+    return Application::GetInstance().GetAecMode() != kAecOff;
+}
+
+void refresh_header_menu_selection() {
+    const bool chat = (s_view_mode == ViewMode::Chat);
+    style_menu_item(s_ui.menu_item_chat, chat);
+    style_menu_item(s_ui.menu_item_emotion, !chat);
+    // 清空只对文字气泡列表有意义，表情模式隐藏。
+    set_obj_hidden(s_ui.menu_item_clear, !chat);
+
+    const bool interrupt_on = is_interrupt_enabled();
+    style_menu_item(s_ui.menu_item_interrupt, interrupt_on);
+    if (s_ui.menu_item_interrupt_lbl != nullptr) {
+        lv_label_set_text(s_ui.menu_item_interrupt_lbl,
+                          interrupt_on ? I18n::T("打断：开") : I18n::T("打断：关"));
+    }
+}
+
+void close_header_menu() {
+    set_obj_hidden(s_ui.menu_mask, true);
+    set_obj_hidden(s_ui.menu_panel, true);
+}
+
+void open_header_menu() {
+    refresh_header_menu_selection();
+    set_obj_hidden(s_ui.menu_mask, false);
+    set_obj_hidden(s_ui.menu_panel, false);
+    if (s_ui.menu_mask != nullptr) {
+        lv_obj_move_foreground(s_ui.menu_mask);
+    }
+    if (s_ui.menu_panel != nullptr) {
+        lv_obj_move_foreground(s_ui.menu_panel);
+    }
+}
+
+void set_header_visible(bool visible) {
+    s_header_visible = visible;
+    set_obj_hidden(s_ui.header, !visible);
+    if (!visible) {
+        close_header_menu();
+    } else if (s_ui.header != nullptr) {
+        lv_obj_move_foreground(s_ui.header);
+    }
+}
+
+void on_emotion_panel_clicked(lv_event_t* /*e*/) {
+    if (s_view_mode != ViewMode::Emotion || reject_if_blocked()) {
+        return;
+    }
+    // 菜单展开时先收起，不顺带切 header，避免误触。
+    if (is_header_menu_open()) {
+        close_header_menu();
+        return;
+    }
+    set_header_visible(!s_header_visible);
+}
+
 void apply_view_mode(ViewMode mode) {
     const bool changed = (mode != s_view_mode);
     s_view_mode = mode;
@@ -620,74 +789,152 @@ void apply_view_mode(ViewMode mode) {
     set_obj_hidden(s_ui.msg_list, !chat);
     set_obj_hidden(s_ui.emotion_panel, chat);
 
-    if (!chat && (changed || s_applied_emotion[0] == '\0')) {
-        ApplyEmotionSrc(s_current_emotion);
+    // 切模式时恢复 header；聊天模式始终显示。
+    set_header_visible(true);
+
+    if (chat) {
+        // 仅 HIDDEN 不会停 EAF timer，仍会按 frame_delay 解码占 CPU。
+        pause_emotion_eaf();
+    } else {
+        ensure_emotion_eaf();
+        if (changed || s_applied_emotion[0] == '\0') {
+            ApplyEmotionSrc(s_current_emotion);
+        }
+        // 同名源时 ApplyEmotionSrc 会 early-return，需显式 resume。
+        resume_emotion_eaf();
     }
 
-    style_mode_btn(s_ui.mode_chat_btn, chat);
-    style_mode_btn(s_ui.mode_emotion_btn, !chat);
+    if (is_header_menu_open()) {
+        refresh_header_menu_selection();
+    }
     chat_update_empty_hint();
 }
 
-void on_mode_clicked(lv_event_t* e) {
-    if (reject_if_blocked()) {
-        return;
-    }
-    const ViewMode mode = static_cast<ViewMode>(
-        reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
-    if (mode == s_view_mode) {
-        return;
-    }
-    apply_view_mode(mode);
-}
-
-// ---------------------------------------------------------------------------
-// "清空" / 右下角对话切换
-// ---------------------------------------------------------------------------
-void on_clear_clicked(lv_event_t* /*e*/) {
+void on_clear_clicked() {
     if (reject_if_blocked()) {
         return;
     }
     ChatScreen::ClearMessages();
 }
 
-void on_toggle_clicked(lv_event_t* /*e*/) {
+void on_interrupt_clicked() {
     if (reject_if_blocked()) {
-        ESP_LOGW(TAG, "toggle ignored: device not activated");
         return;
     }
-    Application::GetInstance().ToggleChatState();
-    ChatScreen::RefreshDeviceState();
+    auto& app = Application::GetInstance();
+    const bool currently_on = app.GetAecMode() != kAecOff;
+    const AecMode next = currently_on ? kAecOff : kAecOnDeviceSide;
+    ESP_LOGI(TAG, "interrupt -> %s", currently_on ? "off" : "on");
+    app.SetAecMode(next);
 }
 
-void build_toggle_button(lv_obj_t* parent) {
+void on_menu_item_clicked(lv_event_t* e) {
+    if (reject_if_blocked()) {
+        close_header_menu();
+        return;
+    }
+    const auto action = static_cast<MenuAction>(
+        reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    close_header_menu();
+    switch (action) {
+    case MenuAction::Emotion:
+        apply_view_mode(ViewMode::Emotion);
+        break;
+    case MenuAction::Chat:
+        apply_view_mode(ViewMode::Chat);
+        break;
+    case MenuAction::Clear:
+        on_clear_clicked();
+        break;
+    case MenuAction::Interrupt:
+        on_interrupt_clicked();
+        break;
+    }
+}
+
+void on_menu_btn_clicked(lv_event_t* /*e*/) {
+    if (reject_if_blocked()) {
+        return;
+    }
+    if (is_header_menu_open()) {
+        close_header_menu();
+    } else {
+        open_header_menu();
+    }
+}
+
+void on_menu_mask_clicked(lv_event_t* /*e*/) { close_header_menu(); }
+
+lv_obj_t* create_menu_item(lv_obj_t* parent, const char* text, MenuAction action,
+                           lv_obj_t** out_label = nullptr) {
     lv_obj_t* btn = lv_button_create(parent);
-    lv_obj_add_flag(btn, LV_OBJ_FLAG_FLOATING);
-    lv_obj_set_size(btn, kToggleBtnSize, kToggleBtnSize);
-    lv_obj_align(btn, LV_ALIGN_BOTTOM_RIGHT, -kToggleBtnMargin, -kToggleBtnMargin);
-    lv_obj_set_style_radius(btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(kColorToggleBtnBg), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(btn, lv_color_hex(kColorToggleBtnPress),
-                              LV_PART_MAIN | LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(btn, 16, LV_PART_MAIN);
-    lv_obj_set_style_shadow_ofs_x(btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_shadow_ofs_y(btn, 4, LV_PART_MAIN);
-    lv_obj_set_style_shadow_color(btn, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_shadow_opa(btn, LV_OPA_30, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(btn, (kToggleBtnSize - kToggleIconSize) / 2,
-                             LV_PART_MAIN);
-
-    lv_obj_t* icon = lv_image_create(btn);
-    lv_image_set_src(icon, "A:ic_app_chat_toggle.spng");
-    lv_image_set_inner_align(icon, LV_IMAGE_ALIGN_CENTER);
-    lv_obj_set_size(icon, kToggleIconSize, kToggleIconSize);
-    lv_obj_center(icon);
-    lv_obj_remove_flag(icon, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_add_event_cb(btn, on_toggle_clicked, LV_EVENT_CLICKED, nullptr);
+    lv_obj_set_width(btn, LV_PCT(100));
+    lv_obj_set_height(btn, kMenuItemH);
+    style_menu_item(btn, false);
+    lv_obj_add_event_cb(btn, on_menu_item_clicked, LV_EVENT_CLICKED,
+                        reinterpret_cast<void*>(static_cast<uintptr_t>(action)));
     screen_swipe_back_ignore(btn, true);
+
+    lv_obj_t* lbl = lv_label_create(btn);
+    lv_label_set_text(lbl, text);
+    lv_obj_set_style_text_color(lbl, lv_color_hex(kColorHeaderBtnText),
+                                LV_PART_MAIN);
+    lv_obj_set_style_text_font(lbl, &font_puhui_20_4, LV_PART_MAIN);
+    lv_obj_align(lbl, LV_ALIGN_LEFT_MID, 20, 0);
+    if (out_label != nullptr) {
+        *out_label = lbl;
+    }
+    return btn;
+}
+
+void build_header_menu(lv_obj_t* parent) {
+    // 全屏透明遮罩：点空白处收起菜单（在 panel 之下）
+    s_ui.menu_mask = lv_obj_create(parent);
+    screen_strip_obj_chrome(s_ui.menu_mask);
+    lv_obj_add_flag(s_ui.menu_mask, LV_OBJ_FLAG_FLOATING);
+    lv_obj_set_size(s_ui.menu_mask, kPanelW, kPanelH);
+    lv_obj_set_pos(s_ui.menu_mask, 0, 0);
+    lv_obj_set_style_bg_opa(s_ui.menu_mask, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_remove_flag(s_ui.menu_mask, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_ui.menu_mask, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(s_ui.menu_mask, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(s_ui.menu_mask, on_menu_mask_clicked, LV_EVENT_CLICKED,
+                        nullptr);
+    screen_swipe_back_ignore(s_ui.menu_mask, true);
+
+    s_ui.menu_panel = lv_obj_create(parent);
+    screen_strip_obj_chrome(s_ui.menu_panel);
+    lv_obj_add_flag(s_ui.menu_panel, LV_OBJ_FLAG_FLOATING);
+    lv_obj_set_size(s_ui.menu_panel, kMenuPanelW, LV_SIZE_CONTENT);
+    lv_obj_align(s_ui.menu_panel, LV_ALIGN_TOP_RIGHT, -kHeaderRightPad,
+                 kHeaderH + kMenuPanelGap);
+    lv_obj_set_style_bg_color(s_ui.menu_panel, lv_color_hex(kColorMenuPanelBg),
+                              LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_ui.menu_panel, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_ui.menu_panel, kMenuPanelRadius, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_ui.menu_panel,
+                                  lv_color_hex(kColorHeaderBtnBorder),
+                                  LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_ui.menu_panel, 1, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_ui.menu_panel, 8, LV_PART_MAIN);
+    lv_obj_set_style_pad_row(s_ui.menu_panel, 6, LV_PART_MAIN);
+    lv_obj_set_flex_flow(s_ui.menu_panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(s_ui.menu_panel, LV_FLEX_ALIGN_START,
+                          LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_remove_flag(s_ui.menu_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_ui.menu_panel, LV_OBJ_FLAG_HIDDEN);
+    screen_swipe_back_ignore(s_ui.menu_panel, true);
+
+    s_ui.menu_item_emotion =
+        create_menu_item(s_ui.menu_panel, I18n::T("表情"), MenuAction::Emotion);
+    s_ui.menu_item_chat =
+        create_menu_item(s_ui.menu_panel, I18n::T("聊天"), MenuAction::Chat);
+    s_ui.menu_item_interrupt =
+        create_menu_item(s_ui.menu_panel, I18n::T("打断：关"), MenuAction::Interrupt,
+                         &s_ui.menu_item_interrupt_lbl);
+    s_ui.menu_item_clear =
+        create_menu_item(s_ui.menu_panel, I18n::T("清空"), MenuAction::Clear);
+    refresh_header_menu_selection();
 }
 
 // ---------------------------------------------------------------------------
@@ -698,6 +945,8 @@ void on_swipe_back() {
     if (indev != nullptr) {
         lv_indev_wait_release(indev);
     }
+    chat_page_leave();
+
     lv_obj_t* old_scr = lv_screen_active();
     lv_obj_t* home = HomeScreen::Create();
     lv_screen_load(home);
@@ -716,13 +965,18 @@ void delete_timer(lv_timer_t*& timer) {
 void on_screen_unloaded(lv_event_t* e) {
     // 仅清理当前实例：Create 重入后，旧屏异步 delete 触发的 UNLOADED
     // 不能把新屏的静态引用清掉。
-    if (lv_event_get_target(e) != s_ui.screen) {
+    lv_obj_t* target = static_cast<lv_obj_t*>(lv_event_get_target(e));
+    if (target != s_ui.screen) {
         return;
     }
+    chat_page_leave();
     delete_timer(s_ui.state_timer);
     delete_timer(s_ui.activation_guard_timer);
     s_ui = UiState{};
     s_activation_blocked = false;
+    s_activation_dialog_shows_code = false;
+    s_header_visible = true;
+    s_voice_ui_held = false;
     s_last_device_state = kDeviceStateUnknown;
     s_applied_emotion[0] = '\0';
 }
@@ -730,27 +984,12 @@ void on_screen_unloaded(lv_event_t* e) {
 // ---------------------------------------------------------------------------
 // UI 组装
 // ---------------------------------------------------------------------------
-lv_obj_t* create_header_text_btn(lv_obj_t* parent, int32_t w, int32_t h,
-                                 const char* text, lv_event_cb_t cb,
-                                 void* user_data) {
-    lv_obj_t* btn = lv_button_create(parent);
-    lv_obj_set_size(btn, w, h);
-    style_header_btn(btn);
-    lv_obj_add_event_cb(btn, cb, LV_EVENT_CLICKED, user_data);
-    screen_swipe_back_ignore(btn, true);
-
-    lv_obj_t* lbl = lv_label_create(btn);
-    lv_label_set_text(lbl, text);
-    lv_obj_set_style_text_color(lbl, lv_color_hex(kColorHeaderBtnText),
-                                LV_PART_MAIN);
-    lv_obj_set_style_text_font(lbl, &font_puhui_20_4, LV_PART_MAIN);
-    lv_obj_center(lbl);
-    return btn;
-}
-
 void build_header(lv_obj_t* parent) {
     lv_obj_t* header = lv_obj_create(parent);
+    s_ui.header = header;
     screen_strip_obj_chrome(header);
+    // FLOATING：表情全屏时叠在 EAF 之上，可独立显隐。
+    lv_obj_add_flag(header, LV_OBJ_FLAG_FLOATING);
     lv_obj_set_size(header, kPanelW, kHeaderH);
     lv_obj_set_pos(header, 0, 0);
     lv_obj_set_style_bg_color(header, lv_color_hex(kColorHeaderBg), LV_PART_MAIN);
@@ -804,22 +1043,27 @@ void build_header(lv_obj_t* parent) {
     chat_update_device_state_label();
     s_ui.state_timer = lv_timer_create(on_chat_status_timer, 500, nullptr);
 
-    lv_obj_t* clear =
-        create_header_text_btn(header, kClearBtnW, kClearBtnH, I18n::T("清空"),
-                               on_clear_clicked, nullptr);
-    lv_obj_align(clear, LV_ALIGN_RIGHT_MID, -kHeaderRightPad, 0);
+    s_ui.menu_btn = lv_button_create(header);
+    lv_obj_remove_style_all(s_ui.menu_btn);
+    lv_obj_set_size(s_ui.menu_btn, kMenuBtnSize, kMenuBtnSize);
+    lv_obj_align(s_ui.menu_btn, LV_ALIGN_RIGHT_MID, -kHeaderRightPad, 0);
+    lv_obj_set_style_bg_opa(s_ui.menu_btn, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_ui.menu_btn, lv_color_hex(0xFFFFFF),
+                              LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(s_ui.menu_btn, LV_OPA_20,
+                            LV_PART_MAIN | LV_STATE_PRESSED);
+    lv_obj_set_style_radius(s_ui.menu_btn, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(s_ui.menu_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(s_ui.menu_btn, on_menu_btn_clicked, LV_EVENT_CLICKED,
+                        nullptr);
+    screen_swipe_back_ignore(s_ui.menu_btn, true);
 
-    s_ui.mode_chat_btn = create_header_text_btn(
-        header, kModeBtnW, kModeBtnH, I18n::T("聊天"), on_mode_clicked,
-        reinterpret_cast<void*>(static_cast<uintptr_t>(ViewMode::Chat)));
-    lv_obj_align_to(s_ui.mode_chat_btn, clear, LV_ALIGN_OUT_LEFT_MID,
-                    -kHeaderCtrlGap, 0);
-
-    s_ui.mode_emotion_btn = create_header_text_btn(
-        header, kModeBtnW, kModeBtnH, I18n::T("表情"), on_mode_clicked,
-        reinterpret_cast<void*>(static_cast<uintptr_t>(ViewMode::Emotion)));
-    lv_obj_align_to(s_ui.mode_emotion_btn, s_ui.mode_chat_btn,
-                    LV_ALIGN_OUT_LEFT_MID, -kHeaderCtrlGap, 0);
+    lv_obj_t* menu_icon = lv_image_create(s_ui.menu_btn);
+    lv_image_set_src(menu_icon, "A:ic_app_chat_menu.spng");
+    lv_image_set_inner_align(menu_icon, LV_IMAGE_ALIGN_CENTER);
+    lv_obj_set_size(menu_icon, kMenuIconSize, kMenuIconSize);
+    lv_obj_remove_flag(menu_icon, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_center(menu_icon);
 }
 
 void build_message_list(lv_obj_t* parent) {
@@ -855,13 +1099,17 @@ void build_message_list(lv_obj_t* parent) {
 void build_emotion_panel(lv_obj_t* parent) {
     s_ui.emotion_panel = lv_obj_create(parent);
     screen_strip_obj_chrome(s_ui.emotion_panel);
-    lv_obj_set_size(s_ui.emotion_panel, kPanelW, kPanelH - kHeaderH);
-    lv_obj_set_pos(s_ui.emotion_panel, 0, kHeaderH);
+    // 全屏铺底；header 以 FLOATING 叠在上面。
+    lv_obj_set_size(s_ui.emotion_panel, kPanelW, kPanelH);
+    lv_obj_set_pos(s_ui.emotion_panel, 0, 0);
     lv_obj_set_style_bg_color(s_ui.emotion_panel, lv_color_hex(kColorBg),
                               LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_ui.emotion_panel, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(s_ui.emotion_panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(s_ui.emotion_panel, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(s_ui.emotion_panel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(s_ui.emotion_panel, on_emotion_panel_clicked,
+                        LV_EVENT_CLICKED, nullptr);
 
     if (!SdCardManager::GetInstance().IsMounted()) {
         ESP_LOGW(TAG, "chat emotion: SD card not mounted");
@@ -879,10 +1127,8 @@ void build_emotion_panel(lv_obj_t* parent) {
         screen_make_input_passive(hint);
     } else {
         s_ui.emotion_eaf = lv_eaf_create(s_ui.emotion_panel);
-        lv_eaf_set_frame_delay(s_ui.emotion_eaf, kEmotionFrameDelayMs);
-        lv_image_set_inner_align(s_ui.emotion_eaf, LV_IMAGE_ALIGN_CONTAIN);
-        // 相对中心上移，给底部白色字幕留出空间
-        lv_obj_align(s_ui.emotion_eaf, LV_ALIGN_CENTER, 0, -kEmotionEafLift);
+        // 保持原图像素尺寸；set_src / frame_delay 留给 ApplyEmotionSrc。
+        lv_obj_center(s_ui.emotion_eaf);
         screen_make_input_passive(s_ui.emotion_eaf);
         // 真正加载留给 apply_view_mode，避免 Create 时重复 set_src
     }
@@ -899,10 +1145,12 @@ lv_obj_t* ChatScreen::Create() {
     // 防御：异常重入时先清掉旧静态引用（对象本身由 LVGL 异步删除）。
     if (s_ui.screen != nullptr) {
         ESP_LOGW(TAG, "Create while previous screen still active, resetting refs");
+        chat_page_leave();
         delete_timer(s_ui.state_timer);
         delete_timer(s_ui.activation_guard_timer);
         s_ui = UiState{};
         s_applied_emotion[0] = '\0';
+        s_header_visible = true;
     }
 
     s_activation_blocked = !is_device_activated();
@@ -921,14 +1169,15 @@ lv_obj_t* ChatScreen::Create() {
     build_header(scr);
     build_message_list(scr);
     build_emotion_panel(scr);
-    build_toggle_button(scr);
+    build_header_menu(scr);
     apply_view_mode(s_view_mode);
 
     if (s_activation_blocked) {
         open_activation_blocked_dialog();
-        s_ui.activation_guard_timer =
-            lv_timer_create(on_activation_guard_timer, 1000, nullptr);
     }
+    // 启动完成前进入时保持轮询，boot_ready 后自动撤掉拦截
+    s_ui.activation_guard_timer =
+        lv_timer_create(on_activation_guard_timer, 1000, nullptr);
 
     screen_attach_swipe_back(scr, on_swipe_back);
     lv_obj_add_event_cb(scr, on_screen_unloaded, LV_EVENT_SCREEN_UNLOADED,
@@ -936,10 +1185,8 @@ lv_obj_t* ChatScreen::Create() {
     lv_obj_add_event_cb(
         scr,
         [](lv_event_t* e) {
-            if (lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED &&
-                s_activation_blocked) {
-                ESP_LOGW(TAG, "screen loaded while not activated, keep dialog");
-                ensure_activation_blocked_dialog();
+            if (lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) {
+                sync_activation_block_state();
             }
         },
         LV_EVENT_SCREEN_LOADED, nullptr);
@@ -947,20 +1194,18 @@ lv_obj_t* ChatScreen::Create() {
 }
 
 void ChatScreen::LifecycleCallback(screen_lifecycle_event_t event) {
-    auto& audio_service = Application::GetInstance().GetAudioService();
     if (event == SCREEN_LIFECYCLE_LOAD) {
         if (!is_device_activated()) {
             ESP_LOGW(TAG, "load: chat_screen blocked (device not activated)");
             log_activation_blocked();
         } else {
-            ESP_LOGI(TAG, "load: chat_screen");
+            ESP_LOGI(TAG, "load: chat_screen -> schedule voice UI start");
+            schedule_voice_ui_start();
         }
-        audio_service.EnableWakeWordDetection(true);
         RefreshDeviceState();
     } else {
-        ESP_LOGI(TAG, "unload: chat_screen");
-        Application::GetInstance().ForceReturnToIdle();
-        audio_service.EnableWakeWordDetection(false);
+        ESP_LOGI(TAG, "unload: chat_screen -> schedule voice UI stop");
+        chat_page_leave();
     }
 }
 
@@ -1002,7 +1247,9 @@ void ChatScreen::SetEmotion(const char* emotion) {
     CopyEmotionName(s_current_emotion, sizeof(s_current_emotion), emotion);
     ESP_LOGI(TAG, "SetEmotion -> %s", s_current_emotion);
 
-    if (s_view_mode == ViewMode::Emotion) {
+    // 必须在前台且表情模式才加载；否则 Idle 的 SetEmotion(neutral) 会在
+    // 退出过程中把已 pause 的 EAF 再次 set_src/resume，占满 CPU。
+    if (IsActive() && s_view_mode == ViewMode::Emotion) {
         ApplyEmotionSrc(s_current_emotion);
     }
 }

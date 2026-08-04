@@ -127,6 +127,13 @@ struct UiState {
 
 UiState s_ui;
 
+void pause_emotion_widget() {
+    // 仅 .eaf 有帧 timer；.sjpg/.jpg/.png 无动画空转问题。
+    if (s_ui.eaf != nullptr && EmotionUsesEaf()) {
+        lv_eaf_pause(s_ui.eaf);
+    }
+}
+
 lv_timer_t* s_activation_guard_timer = nullptr;
 
 // 未激活拦截：全屏模态弹窗，不可关闭，仅能通过返回键离开。
@@ -135,6 +142,29 @@ struct ActivationBlockedDialogUi {
 };
 ActivationBlockedDialogUi s_activation_dlg;
 bool s_activation_blocked = false;
+bool s_activation_dialog_shows_code = false;
+bool s_voice_ui_held = false;
+
+void schedule_voice_ui_start() {
+    if (s_voice_ui_held) {
+        return;
+    }
+    s_voice_ui_held = true;
+    Application::GetInstance().SetVoiceUiDesired(true);
+}
+
+void schedule_voice_ui_stop() {
+    if (!s_voice_ui_held) {
+        return;
+    }
+    s_voice_ui_held = false;
+    Application::GetInstance().SetVoiceUiDesired(false);
+}
+
+void digital_people_page_leave() {
+    pause_emotion_widget();
+    schedule_voice_ui_stop();
+}
 
 const lv_font_t* bubble_font() { return &font_puhui_30_4; }
 
@@ -259,25 +289,18 @@ void OnSwipeBack();
 // 设备激活检查
 // ---------------------------------------------------------------------------
 bool is_device_activated() {
-    auto& app = Application::GetInstance();
-    if (app.HasPendingActivation()) {
-        return false;
-    }
-    if (app.GetDeviceState() == kDeviceStateActivating) {
-        return false;
-    }
-    return true;
+    return Application::GetInstance().IsDeviceActivated();
 }
 
 void log_activation_blocked() {
     auto& app = Application::GetInstance();
-    ESP_LOGW(TAG, "DigitalPeople blocked: device not activated");
+    ESP_LOGW(TAG, "DigitalPeople blocked: device not activated (boot_ready=%d pending=%d state=%d)",
+             app.IsBootReady() ? 1 : 0,
+             app.HasPendingActivation() ? 1 : 0,
+             static_cast<int>(app.GetDeviceState()));
     if (app.HasPendingActivation()) {
         ESP_LOGW(TAG, "pending activation code: %s",
                  app.GetPendingActivationCode().c_str());
-    }
-    if (app.GetDeviceState() == kDeviceStateActivating) {
-        ESP_LOGW(TAG, "device state: activating");
     }
 }
 
@@ -288,6 +311,7 @@ void open_activation_blocked_dialog() {
 
     auto& app = Application::GetInstance();
     const bool has_code = app.HasPendingActivation();
+    s_activation_dialog_shows_code = has_code;
 
     constexpr int32_t kCardW = 520;
     const int32_t kCardH = has_code ? 420 : 340;
@@ -375,8 +399,42 @@ void ensure_activation_blocked_dialog() {
     }
 }
 
+void close_activation_blocked_dialog() {
+    if (s_activation_dlg.mask != nullptr) {
+        lv_obj_delete(s_activation_dlg.mask);
+        s_activation_dlg.mask = nullptr;
+    }
+    s_activation_dialog_shows_code = false;
+}
+
+void sync_activation_block_state() {
+    auto& app = Application::GetInstance();
+    const bool should_block = !is_device_activated();
+    const bool has_code = app.HasPendingActivation();
+    if (should_block == s_activation_blocked) {
+        if (should_block) {
+            if (has_code && !s_activation_dialog_shows_code) {
+                close_activation_blocked_dialog();
+                open_activation_blocked_dialog();
+            } else {
+                ensure_activation_blocked_dialog();
+            }
+        }
+        return;
+    }
+    s_activation_blocked = should_block;
+    if (should_block) {
+        log_activation_blocked();
+        open_activation_blocked_dialog();
+    } else {
+        ESP_LOGI(TAG, "DigitalPeople unblocked: device activated/ready");
+        close_activation_blocked_dialog();
+        schedule_voice_ui_start();
+    }
+}
+
 void on_activation_guard_timer(lv_timer_t* /*timer*/) {
-    ensure_activation_blocked_dialog();
+    sync_activation_block_state();
 }
 
 void OnSwipeBack() {
@@ -384,6 +442,8 @@ void OnSwipeBack() {
     if (indev != nullptr) {
         lv_indev_wait_release(indev);
     }
+    digital_people_page_leave();
+
     lv_obj_t* old_scr = lv_screen_active();
     lv_obj_t* home    = HomeScreen::Create();
     lv_screen_load(home);
@@ -392,25 +452,38 @@ void OnSwipeBack() {
     }
 }
 
-void OnScreenUnloaded(lv_event_t* /*e*/) {
+void OnScreenUnloaded(lv_event_t* e) {
+    // 仅清理当前实例：Create 重入后旧屏 async delete 的 UNLOADED
+    // 不能清掉新屏的静态引用。
+    if (lv_event_get_target(e) != s_ui.screen) {
+        return;
+    }
+    digital_people_page_leave();
     if (s_activation_guard_timer != nullptr) {
         lv_timer_delete(s_activation_guard_timer);
         s_activation_guard_timer = nullptr;
     }
     s_activation_dlg = ActivationBlockedDialogUi{};
     s_activation_blocked = false;
-    s_ui.screen        = nullptr;
-    s_ui.eaf           = nullptr;
-    s_ui.hint_label    = nullptr;
-    s_ui.system_bubble = nullptr;
-    s_ui.system_label  = nullptr;
-    s_ui.user_bubble   = nullptr;
-    s_ui.user_label    = nullptr;
+    s_activation_dialog_shows_code = false;
+    s_voice_ui_held = false;
+    s_ui = UiState{};
 }
 
 }  // namespace
 
 lv_obj_t* DigitalPeopleScreen::Create() {
+    if (s_ui.screen != nullptr) {
+        ESP_LOGW(TAG, "Create while previous screen still active, resetting refs");
+        digital_people_page_leave();
+        if (s_activation_guard_timer != nullptr) {
+            lv_timer_delete(s_activation_guard_timer);
+            s_activation_guard_timer = nullptr;
+        }
+        s_voice_ui_held = false;
+        s_ui = UiState{};
+    }
+
     s_activation_blocked = !is_device_activated();
     if (s_activation_blocked) {
         log_activation_blocked();
@@ -460,15 +533,13 @@ lv_obj_t* DigitalPeopleScreen::Create() {
 
     if (s_activation_blocked) {
         open_activation_blocked_dialog();
-        s_activation_guard_timer =
-            lv_timer_create(on_activation_guard_timer, 1000, nullptr);
     }
+    s_activation_guard_timer =
+        lv_timer_create(on_activation_guard_timer, 1000, nullptr);
 
     lv_obj_add_event_cb(scr, [](lv_event_t* e) {
-        if (lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED &&
-            s_activation_blocked) {
-            ESP_LOGW(TAG, "screen loaded while not activated, keep dialog");
-            ensure_activation_blocked_dialog();
+        if (lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) {
+            sync_activation_block_state();
         }
     }, LV_EVENT_SCREEN_LOADED, nullptr);
 
@@ -507,20 +578,18 @@ void DigitalPeopleScreen::ClearMessages() {
 }
 
 void DigitalPeopleScreen::LifecycleCallback(screen_lifecycle_event_t event) {
-    auto& audio_service = Application::GetInstance().GetAudioService();
     if (event == SCREEN_LIFECYCLE_LOAD) {
         if (!is_device_activated()) {
             ESP_LOGW(TAG,
                      "load: digital_people_screen blocked (device not activated)");
             log_activation_blocked();
         } else {
-            ESP_LOGI(TAG, "load: digital_people_screen");
+            ESP_LOGI(TAG, "load: digital_people_screen -> schedule voice UI start");
+            schedule_voice_ui_start();
         }
-        audio_service.EnableWakeWordDetection(true);
     } else {
-        ESP_LOGI(TAG, "unload: digital_people_screen");
-        Application::GetInstance().ForceReturnToIdle();
-        audio_service.EnableWakeWordDetection(false);
+        ESP_LOGI(TAG, "unload: digital_people_screen -> schedule voice UI stop");
+        digital_people_page_leave();
     }
 }
 
@@ -537,7 +606,7 @@ void DigitalPeopleScreen::SetEmotion(const char* category) {
 
     // 在前台才真的替换表情源；调用方必须已经持有 LVGL 主锁
     // （和 ShowUserMessage / ShowSystemMessage 一致的约定）。
-    if (s_ui.eaf != nullptr) {
+    if (DigitalPeopleScreen::IsActive() && s_ui.eaf != nullptr) {
         SetEmotionSrc(s_ui.eaf, s_current_emotion);
     }
 }

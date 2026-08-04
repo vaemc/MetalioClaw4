@@ -137,7 +137,8 @@ struct WakeWordGuard {
         }
     }
     ~WakeWordGuard() {
-        if (disabled) {
+        // 仅当语音 UI 会话仍在时恢复，避免生图页把桌面唤醒词误打开。
+        if (disabled && Application::GetInstance().IsVoiceUiActive()) {
             as.EnableWakeWordDetection(true);
         }
     }
@@ -1309,7 +1310,6 @@ void AiImageGenScreen::LifecycleCallback(screen_lifecycle_event_t event) {
     ESP_LOGI(TAG, "unload: ai_image_gen_screen");
     s_state.store(State::Closing, std::memory_order_release);
     s_stop_requested.store(true, std::memory_order_release);
-    auto& audio_service = Application::GetInstance().GetAudioService();
-    Application::GetInstance().ForceReturnToIdle();
-    audio_service.EnableWakeWordDetection(false);
+    // 生图页不持有语音 UI 会话；只确保不误开唤醒词。
+    Application::GetInstance().GetAudioService().EnableWakeWordDetection(false);
 }

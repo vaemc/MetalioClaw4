@@ -8,32 +8,49 @@ EspWakeWord::EspWakeWord() {
 }
 
 EspWakeWord::~EspWakeWord() {
-    if (wakenet_data_ != nullptr) {
-        wakenet_iface_->destroy(wakenet_data_);
+    Deinitialize();
+    if (models_owned_ && wakenet_model_ != nullptr) {
         esp_srmodel_deinit(wakenet_model_);
+        wakenet_model_ = nullptr;
+    }
+}
+
+void EspWakeWord::Deinitialize() {
+    running_ = false;
+    if (wakenet_data_ != nullptr && wakenet_iface_ != nullptr) {
+        wakenet_iface_->destroy(wakenet_data_);
+        wakenet_data_ = nullptr;
     }
 }
 
 bool EspWakeWord::Initialize(AudioCodec* codec, srmodel_list_t* models_list) {
     codec_ = codec;
 
-    if (models_list == nullptr) {
-        wakenet_model_ = esp_srmodel_init("model");
-    } else {
-        wakenet_model_ = models_list;
+    if (wakenet_data_ != nullptr) {
+        return true;
+    }
+
+    if (wakenet_model_ == nullptr) {
+        if (models_list == nullptr) {
+            wakenet_model_ = esp_srmodel_init("model");
+            models_owned_ = true;
+        } else {
+            wakenet_model_ = models_list;
+            models_owned_ = false;
+        }
     }
 
     if (wakenet_model_ == nullptr || wakenet_model_->num == -1) {
         ESP_LOGE(TAG, "Failed to initialize wakenet model");
         return false;
     }
-    if(wakenet_model_->num > 1) {
+    if (wakenet_model_->num > 1) {
         ESP_LOGW(TAG, "More than one model found, using the first one");
     } else if (wakenet_model_->num == 0) {
         ESP_LOGE(TAG, "No model found");
         return false;
     }
-    char *model_name = wakenet_model_->model_name[0];
+    char* model_name = wakenet_model_->model_name[0];
     wakenet_iface_ = (esp_wn_iface_t*)esp_wn_handle_from_name(model_name);
     wakenet_data_ = wakenet_iface_->create(model_name, DET_MODE_95);
 
@@ -61,7 +78,7 @@ void EspWakeWord::Feed(const std::vector<int16_t>& data) {
         return;
     }
 
-    int res = wakenet_iface_->detect(wakenet_data_, (int16_t *)data.data());
+    int res = wakenet_iface_->detect(wakenet_data_, (int16_t*)data.data());
     if (res > 0) {
         last_detected_wake_word_ = wakenet_iface_->get_word_name(wakenet_data_, res);
         running_ = false;

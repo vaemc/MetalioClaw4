@@ -213,6 +213,7 @@ struct ActivationBlockedDialogUi {
 };
 ActivationBlockedDialogUi s_activation_dlg;
 bool s_activation_blocked = false;
+bool s_activation_dialog_shows_code = false;
 screen_lifecycle_cb_t s_lifecycle_cb = nullptr;
 
 const lv_font_t* chat_font() { return &font_puhui_30_4; }
@@ -270,25 +271,18 @@ void update_list_actions_visible_locked(bool visible);
 // 工具
 // ---------------------------------------------------------------------------
 bool is_device_activated() {
-    auto& app = Application::GetInstance();
-    if (app.HasPendingActivation()) {
-        return false;
-    }
-    if (app.GetDeviceState() == kDeviceStateActivating) {
-        return false;
-    }
-    return true;
+    return Application::GetInstance().IsDeviceActivated();
 }
 
 void log_activation_blocked() {
     auto& app = Application::GetInstance();
-    ESP_LOGW(TAG, "OpenClaw blocked: device not activated");
+    ESP_LOGW(TAG, "OpenClaw blocked: device not activated (boot_ready=%d pending=%d state=%d)",
+             app.IsBootReady() ? 1 : 0,
+             app.HasPendingActivation() ? 1 : 0,
+             static_cast<int>(app.GetDeviceState()));
     if (app.HasPendingActivation()) {
         ESP_LOGW(TAG, "pending activation code: %s",
                  app.GetPendingActivationCode().c_str());
-    }
-    if (app.GetDeviceState() == kDeviceStateActivating) {
-        ESP_LOGW(TAG, "device state: activating");
     }
 }
 
@@ -299,6 +293,7 @@ void open_activation_blocked_dialog(lv_obj_t* parent_screen) {
 
     auto& app = Application::GetInstance();
     const bool has_code = app.HasPendingActivation();
+    s_activation_dialog_shows_code = has_code;
 
     constexpr int32_t kCardW = 520;
     const int32_t kCardH = has_code ? 420 : 340;
@@ -388,8 +383,45 @@ void ensure_activation_blocked_dialog() {
     }
 }
 
+void close_activation_blocked_dialog() {
+    if (s_activation_dlg.mask != nullptr) {
+        lv_obj_delete(s_activation_dlg.mask);
+        s_activation_dlg.mask = nullptr;
+    }
+    s_activation_dialog_shows_code = false;
+}
+
+void sync_activation_block_state() {
+    auto& app = Application::GetInstance();
+    const bool should_block = !is_device_activated();
+    const bool has_code = app.HasPendingActivation();
+    if (should_block == s_activation_blocked) {
+        if (should_block) {
+            if (has_code && !s_activation_dialog_shows_code) {
+                close_activation_blocked_dialog();
+                lv_obj_t* parent = s_list_screen != nullptr ? s_list_screen
+                                                            : s_detail_screen;
+                open_activation_blocked_dialog(parent);
+            } else {
+                ensure_activation_blocked_dialog();
+            }
+        }
+        return;
+    }
+    s_activation_blocked = should_block;
+    if (should_block) {
+        log_activation_blocked();
+        lv_obj_t* parent = s_list_screen != nullptr ? s_list_screen
+                                                    : s_detail_screen;
+        open_activation_blocked_dialog(parent);
+    } else {
+        ESP_LOGI(TAG, "OpenClaw unblocked: device activated/ready");
+        close_activation_blocked_dialog();
+    }
+}
+
 void on_activation_guard_timer(lv_timer_t* /*timer*/) {
-    ensure_activation_blocked_dialog();
+    sync_activation_block_state();
 }
 
 // ---------------------------------------------------------------------------
@@ -1830,7 +1862,9 @@ void record_and_upload_task(void* /*arg*/) {
     if (buffer == nullptr) {
         ESP_LOGE(TAG, "no memory for record buffer");
         post_status_from_worker(I18n::T("内存不足"), kColorHintText);
-        if (wake_disabled_by_us) as.EnableWakeWordDetection(true);
+        if (wake_disabled_by_us && app.IsVoiceUiActive()) {
+            as.EnableWakeWordDetection(true);
+        }
         s_state.store(State::Idle);
         if (esp_lv_adapter_lock(-1) == ESP_OK) {
             if (is_detail_screen_alive()) update_button_ui_locked(State::Idle);
@@ -1873,7 +1907,11 @@ void record_and_upload_task(void* /*arg*/) {
     const int duration_ms = static_cast<int>((end_us - start_us) / 1000);
 
     if (wake_disabled_by_us) {
-        as.EnableWakeWordDetection(true);
+        // 仅语音 UI 会话内才恢复；OpenClaw 本身不开唤醒词。
+        if (app.IsVoiceUiActive()) {
+            as.EnableWakeWordDetection(true);
+        }
+        wake_disabled_by_us = false;
     }
 
     // 录音过短 -> 提示并丢弃
@@ -2267,6 +2305,11 @@ void on_list_screen_unloaded(lv_event_t* /*e*/) {
         }
         s_activation_dlg = ActivationBlockedDialogUi{};
         s_activation_blocked = false;
+        s_activation_dialog_shows_code = false;
+    } else {
+        // 列表屏被内部导航删掉时，mask 作为子对象已失效，只清指针勿 delete
+        s_activation_dlg = ActivationBlockedDialogUi{};
+        s_activation_dialog_shows_code = false;
     }
 }
 
@@ -2297,6 +2340,10 @@ void on_detail_screen_unloaded(lv_event_t* /*e*/) {
 
     if (!s_navigating_within_openclaw.exchange(false, std::memory_order_acq_rel)) {
         stop_openclaw_worker();
+    } else {
+        // 详情屏被内部导航删掉时，mask 子对象已失效
+        s_activation_dlg = ActivationBlockedDialogUi{};
+        s_activation_dialog_shows_code = false;
     }
 }
 
@@ -2588,8 +2635,8 @@ lv_obj_t* create_list_screen() {
                         nullptr);
     lv_obj_add_event_cb(scr, [](lv_event_t* e) {
         if (lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) {
+            sync_activation_block_state();
             if (s_activation_blocked) {
-                ensure_activation_blocked_dialog();
                 return;
             }
             ensure_openclaw_worker();
@@ -2634,6 +2681,10 @@ lv_obj_t* create_detail_screen(const std::string& conversation_id,
                         nullptr);
     lv_obj_add_event_cb(scr, [](lv_event_t* e) {
         if (lv_event_get_code(e) == LV_EVENT_SCREEN_LOADED) {
+            sync_activation_block_state();
+            if (s_activation_blocked) {
+                return;
+            }
             ensure_openclaw_worker();
             trigger_fetch_history(true);
             start_auto_refresh_timer();
@@ -2661,10 +2712,8 @@ lv_obj_t* OpenClawScreen::Create() {
 
     lv_obj_t* scr = create_list_screen();
 
-    if (s_activation_blocked) {
-        s_activation_guard_timer =
-            lv_timer_create(on_activation_guard_timer, 1000, nullptr);
-    }
+    s_activation_guard_timer =
+        lv_timer_create(on_activation_guard_timer, 1000, nullptr);
 
     return scr;
 }
@@ -2683,8 +2732,7 @@ void OpenClawScreen::LifecycleCallback(screen_lifecycle_event_t event) {
             return;
         }
         ESP_LOGI(TAG, "unload: openclaw_screen");
-        auto& audio_service = Application::GetInstance().GetAudioService();
-        Application::GetInstance().ForceReturnToIdle();
-        audio_service.EnableWakeWordDetection(false);
+        // OpenClaw 不持有语音 UI 会话；只确保不误开唤醒词。
+        Application::GetInstance().GetAudioService().EnableWakeWordDetection(false);
     }
 }

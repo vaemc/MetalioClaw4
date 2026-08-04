@@ -27,6 +27,20 @@ extern "C" {
 #define CX25601N_VREG_MAX_MV        4800
 #define CX25601N_VREG_STEP_MV       10
 
+/* VOTG = code * 80 mV, code 0x30..0x42 → 3840..5280 mV */
+#define CX25601N_VOTG_MIN_MV        3840
+#define CX25601N_VOTG_MAX_MV        5280
+#define CX25601N_VOTG_STEP_MV       80
+
+/* IOTG = code * 20 mA, code 5..60 → 100..1200 mA */
+#define CX25601N_IOTG_MIN_MA        100
+#define CX25601N_IOTG_MAX_MA        1200
+#define CX25601N_IOTG_STEP_MA       20
+
+/* OTG 默认输出：约 5.04 V / 1 A（手册 POR） */
+#define CX25601N_OTG_DEFAULT_MV     5040
+#define CX25601N_OTG_DEFAULT_MA     1000
+
 /* REG0x1E CHG_STAT[4:3] (datasheet V2.2.2) */
 #define CX25601N_CHG_STAT_NOT       0  /* 未充电/终止 */
 #define CX25601N_CHG_STAT_CC        1  /* 涓流/预充/CC */
@@ -38,6 +52,10 @@ bool cx25601n_is_ready(void);
 
 esp_err_t cx25601n_enable_charge(bool enable);
 esp_err_t cx25601n_is_charge_enabled(bool *enabled);
+
+/* OTG Boost 放电：开启时配置 5V/1A，先关充电再置 EN_OTG（对齐 cx2560x 例程） */
+esp_err_t cx25601n_enable_otg(bool enable);
+esp_err_t cx25601n_is_otg_enabled(bool *enabled);
 
 esp_err_t cx25601n_set_ichg_ma(uint32_t ma);
 esp_err_t cx25601n_get_ichg_ma(uint32_t *ma);

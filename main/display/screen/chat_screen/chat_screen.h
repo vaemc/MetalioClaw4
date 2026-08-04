@@ -8,10 +8,14 @@
 //
 // 暗黑主题聊天页，两种视图：
 //   - 聊天：左右文字气泡会话（assistant/system 左，user 右）
-//   - 表情：EAF 偏上播放 system/chat/{emotion}.eaf，底部共用白色字幕（新消息覆盖）
+//   - 表情：EAF 全屏居中播放 system/chat/{emotion}.eaf，底部字幕叠加；
+//           点击内容区可显隐 Header
+//
+// 语音会话：LOAD 时 SetVoiceUiDesired(true)；UNLOAD/返回 时 false，
+// 立刻 destroy 唤醒词 AFE（esp-sr 内部任务否则常驻高 CPU）。
 //
 // 消息 / 表情由 LVAdapterDisplay 注入；未激活时全屏拦截弹窗。
-// Header：返回 + 标题/状态 +「表情/聊天」切换 + 清空；右下角切换对话状态。
+// Header：返回 + 标题/状态 + 右侧菜单（表情/聊天/打断/清空）。
 // ---------------------------------------------------------------------------
 
 enum class ChatMsgDir : uint8_t {

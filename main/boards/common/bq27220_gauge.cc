@@ -1,6 +1,7 @@
 #include "bq27220_gauge.h"
 
 #include <esp_log.h>
+#include <esp_timer.h>
 
 #define TAG "Bq27220Gauge"
 
@@ -12,6 +13,8 @@ constexpr uint8_t  kRegCurrent     = 0x0C;  // int16, mA (+ 充电 / - 放电)
 constexpr uint32_t kI2cSpeedHz     = 100 * 1000;  // 100 kHz, 上限 400 kHz
 constexpr int      kI2cTimeoutMs   = 50;
 constexpr int      kProbeTimeoutMs = 50;
+// 连续失败后冷却，给总线恢复时间，减少与 GT911/TCA 叠加重试
+constexpr int64_t  kFailCooldownUs = 2000 * 1000;  // 2s
 
 // 电池电压 → SOC 线性内插（参考 xiaozhi-card 实现：完全不依赖 gauge 的 SOC
 // 寄存器，因为未标定的 BQ27220 估算的 SOC 严重失真，电压才是可靠数据源）。
@@ -130,6 +133,10 @@ void Bq27220Gauge::ResetFilter() {
 
 bool Bq27220Gauge::ReadU16(uint8_t reg, uint16_t* out) {
     if (dev_ == nullptr || out == nullptr) return false;
+    const int64_t now = esp_timer_get_time();
+    if (now < cooldown_until_us_) {
+        return false;
+    }
     uint8_t buf[2] = {0};
     esp_err_t err = i2c_master_transmit_receive(dev_, &reg, 1, buf,
                                                 sizeof(buf), kI2cTimeoutMs);
@@ -139,9 +146,13 @@ bool Bq27220Gauge::ReadU16(uint8_t reg, uint16_t* out) {
                           "(consecutive=%d)",
                      reg, err, consecutive_err_);
         }
+        if (consecutive_err_ >= 2) {
+            cooldown_until_us_ = now + kFailCooldownUs;
+        }
         return false;
     }
     consecutive_err_ = 0;
+    cooldown_until_us_ = 0;
     *out = static_cast<uint16_t>(buf[0]) |
            (static_cast<uint16_t>(buf[1]) << 8);
     return true;
