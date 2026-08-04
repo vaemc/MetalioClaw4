@@ -12,6 +12,7 @@
 
 #include <cstring>
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <cJSON.h>
 #include <driver/gpio.h>
 #include <arpa/inet.h>
@@ -68,6 +69,16 @@ Application::Application() {
 }
 
 Application::~Application() {
+    CancelVoiceUiHardRelease();
+    if (voice_ui_start_retry_timer_ != nullptr) {
+        esp_timer_stop(voice_ui_start_retry_timer_);
+        esp_timer_delete(voice_ui_start_retry_timer_);
+        voice_ui_start_retry_timer_ = nullptr;
+    }
+    if (voice_ui_release_timer_ != nullptr) {
+        esp_timer_delete(voice_ui_release_timer_);
+        voice_ui_release_timer_ = nullptr;
+    }
     if (clock_timer_handle_ != nullptr) {
         esp_timer_stop(clock_timer_handle_);
         esp_timer_delete(clock_timer_handle_);
@@ -287,7 +298,7 @@ void Application::StopSystemAudioForStressTest() {
 }
 
 void Application::RestoreSystemAudioAfterStressTest() {
-    // 唤醒词只属于语音 UI 会话；压力测试结束后由聊天/数字人页重新 StartVoiceUiSession。
+    // 唤醒词只属于语音 UI 会话；压力测试结束后由聊天/数字人页重新 SetVoiceUiDesired(true)。
     if (voice_ui_active_ && device_state_ == kDeviceStateIdle) {
         audio_service_.EnableWakeWordDetection(true);
     }
@@ -829,11 +840,12 @@ void Application::SetDeviceState(DeviceState state) {
             display->SetStatus(Lang::Strings::STANDBY);
             display->SetEmotion("neutral");
             audio_service_.EnableVoiceProcessing(false);
-            // 唤醒词仅在聊天/数字人会话内开启，避免桌面后台监听占 CPU。
+            // 唤醒词仅在聊天/数字人会话内开启；桌面必须 Release 掉 AFE。
             if (voice_ui_active_) {
                 audio_service_.EnableWakeWordDetection(true);
             } else {
                 audio_service_.EnableWakeWordDetection(false);
+                audio_service_.ReleaseWakeWordEngine();
             }
             break;
         case kDeviceStateConnecting:
@@ -1045,14 +1057,15 @@ void Application::SetAecMode(AecMode mode) {
         settings.SetBool("interrupt", aec_mode_ != kAecOff);
     }
 
+    // 同步写入偏好，避免 Schedule 前已按 Realtime 进聆听却尚未 EnableDeviceAec
+    audio_service_.EnableDeviceAec(aec_mode_ == kAecOnDeviceSide);
+
     Schedule([this]() {
         auto& board = Board::GetInstance();
         auto display = board.GetDisplay();
         if (aec_mode_ == kAecOnDeviceSide) {
-            audio_service_.EnableDeviceAec(true);
             display->ShowNotification(Lang::Strings::RTC_MODE_ON);
         } else {
-            audio_service_.EnableDeviceAec(false);
             display->ShowNotification(Lang::Strings::RTC_MODE_OFF);
         }
 
@@ -1079,67 +1092,135 @@ void Application::PlaySound(const std::string_view& sound) {
     audio_service_.PlaySound(sound);
 }
 
-void Application::ScheduleStartVoiceUiSession() {
-    Schedule([this]() { StartVoiceUiSession(); });
-}
-
-void Application::ScheduleStopVoiceUiSession() {
-    // 捕获调度瞬间的 epoch；若之后又 Start（epoch 递增），本 Stop 自动失效。
-    const uint32_t epoch = voice_ui_epoch_;
-    Schedule([this, epoch]() { StopVoiceUiSession(epoch); });
-}
-
-void Application::StartVoiceUiSession() {
-    // 先抬 epoch，使队列里更早的 Stop 失效（聊天↔数字人重叠切换）。
-    ++voice_ui_epoch_;
-
-    if (voice_ui_active_) {
-        // 聊天↔数字人切换时可能重复 Start：已是会话则确保 Idle 下唤醒词开着。
-        if (device_state_ == kDeviceStateIdle) {
-            audio_service_.EnableVoiceProcessing(false);
-            audio_service_.EnableWakeWordDetection(true);
-        }
-        ESP_LOGI(TAG, "voice UI session already active (epoch=%u)",
-                 static_cast<unsigned>(voice_ui_epoch_));
-        return;
-    }
-
-    ESP_LOGI(TAG, "StartVoiceUiSession epoch=%u",
-             static_cast<unsigned>(voice_ui_epoch_));
-    voice_ui_active_ = true;
-
-    if (device_state_ == kDeviceStateIdle) {
-        // 开机已是 Idle，SetDeviceState 会早退，需显式打开唤醒词。
-        audio_service_.EnableVoiceProcessing(false);
-        audio_service_.EnableWakeWordDetection(true);
-        auto display = Board::GetInstance().GetDisplay();
-        display->SetStatus(Lang::Strings::STANDBY);
-        display->SetEmotion("neutral");
-    } else if (device_state_ != kDeviceStateActivating &&
-               device_state_ != kDeviceStateStarting &&
-               device_state_ != kDeviceStateWifiConfiguring &&
-               device_state_ != kDeviceStateAudioTesting &&
-               device_state_ != kDeviceStateUpgrading) {
-        SetDeviceState(kDeviceStateIdle);
-    }
-}
-
-void Application::StopVoiceUiSession(uint32_t epoch) {
-    if (epoch != voice_ui_epoch_ || !voice_ui_active_) {
-        ESP_LOGD(TAG,
-                 "StopVoiceUiSession skipped (req=%u cur=%u active=%d)",
-                 static_cast<unsigned>(epoch),
-                 static_cast<unsigned>(voice_ui_epoch_),
-                 voice_ui_active_ ? 1 : 0);
-        return;
-    }
-
-    voice_ui_active_ = false;
-
-    // 先关门闩再关硬件路径，避免卸载中再次进入 Listening。
+void Application::SoftStopVoiceAudioPaths() {
     audio_service_.EnableWakeWordDetection(false);
     audio_service_.EnableVoiceProcessing(false);
+}
 
+void Application::TearDownVoiceAudioPaths(bool release_wake_word) {
+    SoftStopVoiceAudioPaths();
+    if (release_wake_word) {
+        audio_service_.ReleaseWakeWordEngine();
+    }
+}
+
+void Application::CancelVoiceUiHardRelease() {
+    if (voice_ui_release_timer_ != nullptr) {
+        esp_timer_stop(voice_ui_release_timer_);
+    }
+}
+
+void Application::ScheduleVoiceUiHardRelease(uint32_t epoch) {
+    CancelVoiceUiHardRelease();
+    voice_ui_pending_release_epoch_ = epoch;
+
+    if (voice_ui_release_timer_ == nullptr) {
+        esp_timer_create_args_t args = {
+            .callback =
+                [](void* arg) {
+                    auto* app = static_cast<Application*>(arg);
+                    const uint32_t epoch = app->voice_ui_pending_release_epoch_;
+                    app->Schedule([app, epoch]() {
+                        if (app->voice_ui_desired_ || app->voice_ui_epoch_ != epoch) {
+                            return;
+                        }
+                        ESP_LOGI(TAG, "voice UI delayed hard release (epoch=%" PRIu32 ")", epoch);
+                        app->ApplyVoiceUiStop();
+                    });
+                },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "voice_ui_rel",
+            .skip_unhandled_events = true,
+        };
+        esp_timer_create(&args, &voice_ui_release_timer_);
+    }
+
+    // 停 Feed 后短暂保留 AFE：快速再进语音页可复用，并让旧屏内存先释放。
+    constexpr uint64_t kReleaseDelayUs = 1200 * 1000;
+    esp_timer_start_once(voice_ui_release_timer_, kReleaseDelayUs);
+}
+
+void Application::ScheduleVoiceUiStartRetry(uint32_t epoch) {
+    voice_ui_pending_retry_epoch_ = epoch;
+    if (voice_ui_start_retry_timer_ == nullptr) {
+        esp_timer_create_args_t args = {
+            .callback =
+                [](void* arg) {
+                    auto* app = static_cast<Application*>(arg);
+                    const uint32_t epoch = app->voice_ui_pending_retry_epoch_;
+                    app->Schedule([app, epoch]() {
+                        if (!app->voice_ui_desired_ || app->voice_ui_epoch_ != epoch) {
+                            return;
+                        }
+                        app->ApplyVoiceUiStart();
+                    });
+                },
+            .arg = this,
+            .dispatch_method = ESP_TIMER_TASK,
+            .name = "voice_ui_retry",
+            .skip_unhandled_events = true,
+        };
+        esp_timer_create(&args, &voice_ui_start_retry_timer_);
+    } else {
+        esp_timer_stop(voice_ui_start_retry_timer_);
+    }
+    esp_timer_start_once(voice_ui_start_retry_timer_, 200 * 1000);
+}
+
+bool Application::TryEnableWakeWordForVoiceUi() {
+    if (audio_service_.IsWakeWordEngineReady()) {
+        audio_service_.EnableWakeWordDetection(true);
+        return audio_service_.IsWakeWordEngineReady();
+    }
+
+    const size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    const size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    // WakeNet AFE 创建失败时可能返回非空坏句柄并在卷积中 Load fault；堆过低则推迟。
+    constexpr size_t kMinInternal = 48 * 1024;
+    constexpr size_t kMinPsram = 256 * 1024;
+    if (free_internal < kMinInternal || free_psram < kMinPsram) {
+        ESP_LOGW(TAG,
+                 "Defer wake word init (internal=%uKB psram=%uKB)",
+                 (unsigned)(free_internal / 1024), (unsigned)(free_psram / 1024));
+        return false;
+    }
+
+    audio_service_.EnableWakeWordDetection(true);
+    if (!audio_service_.IsWakeWordEngineReady()) {
+        ESP_LOGW(TAG, "Wake word init failed, will retry");
+        return false;
+    }
+    return true;
+}
+
+void Application::SetVoiceUiDesired(bool desired) {
+    if (voice_ui_desired_ == desired) {
+        ESP_LOGD(TAG, "voice UI desired unchanged (%d)", desired ? 1 : 0);
+        return;
+    }
+    voice_ui_desired_ = desired;
+    ++voice_ui_epoch_;
+    const uint32_t epoch = voice_ui_epoch_;
+    ESP_LOGI(TAG, "voice UI desired -> %d (epoch=%" PRIu32 ")", desired ? 1 : 0, epoch);
+
+    if (!desired) {
+        // 立刻软停（降 CPU），硬 destroy 延后；若很快再进页则取消 destroy。
+        voice_ui_active_ = false;
+        SoftStopVoiceAudioPaths();
+        if (voice_ui_start_retry_timer_ != nullptr) {
+            esp_timer_stop(voice_ui_start_retry_timer_);
+        }
+        ScheduleVoiceUiHardRelease(epoch);
+        Schedule([this]() { SyncVoiceUiSession(); });
+        return;
+    }
+
+    CancelVoiceUiHardRelease();
+    Schedule([this]() { SyncVoiceUiSession(); });
+}
+
+void Application::ParkVoiceUiProtocol() {
     if (device_state_ == kDeviceStateListening && protocol_) {
         protocol_->CloseAudioChannel();
     } else if (device_state_ == kDeviceStateSpeaking) {
@@ -1154,14 +1235,80 @@ void Application::StopVoiceUiSession(uint32_t epoch) {
     if (device_state_ == kDeviceStateListening ||
         device_state_ == kDeviceStateSpeaking ||
         device_state_ == kDeviceStateConnecting) {
-        // voice_ui_active_ 已 false → Idle 分支不会重开唤醒词。
         SetDeviceState(kDeviceStateIdle);
     }
+}
 
-    // 双保险：无论进函数前是否已 Idle，桌面不得留监听。
-    audio_service_.EnableWakeWordDetection(false);
-    audio_service_.EnableVoiceProcessing(false);
+void Application::SyncVoiceUiSession() {
+    if (voice_ui_desired_) {
+        ApplyVoiceUiStart();
+        // Start 中途又 leave：禁止留下唤醒词
+        if (!voice_ui_desired_) {
+            SoftStopVoiceAudioPaths();
+            voice_ui_active_ = false;
+            ScheduleVoiceUiHardRelease(voice_ui_epoch_);
+        }
+    } else {
+        // 硬释放交给延迟定时器；这里只停协议，避免抵消 debounce
+        voice_ui_active_ = false;
+        SoftStopVoiceAudioPaths();
+        ParkVoiceUiProtocol();
+    }
+}
 
-    ESP_LOGI(TAG, "StopVoiceUiSession: wake word off, protocol parked (epoch=%u)",
-             static_cast<unsigned>(epoch));
+void Application::ApplyVoiceUiStart() {
+    if (!voice_ui_desired_) {
+        SoftStopVoiceAudioPaths();
+        voice_ui_active_ = false;
+        ESP_LOGI(TAG, "ApplyVoiceUiStart skipped (desired=0)");
+        return;
+    }
+
+    const uint32_t epoch = voice_ui_epoch_;
+
+    if (voice_ui_active_) {
+        if (device_state_ == kDeviceStateIdle) {
+            audio_service_.EnableVoiceProcessing(false);
+            if (!TryEnableWakeWordForVoiceUi()) {
+                ScheduleVoiceUiStartRetry(epoch);
+                return;
+            }
+        }
+        ESP_LOGI(TAG, "voice UI already active");
+        return;
+    }
+
+    ESP_LOGI(TAG, "ApplyVoiceUiStart");
+    voice_ui_active_ = true;
+
+    if (device_state_ == kDeviceStateIdle) {
+        audio_service_.EnableVoiceProcessing(false);
+        if (!TryEnableWakeWordForVoiceUi()) {
+            voice_ui_active_ = false;
+            ScheduleVoiceUiStartRetry(epoch);
+            return;
+        }
+        if (!voice_ui_desired_) {
+            SoftStopVoiceAudioPaths();
+            voice_ui_active_ = false;
+            return;
+        }
+        auto display = Board::GetInstance().GetDisplay();
+        display->SetStatus(Lang::Strings::STANDBY);
+        display->SetEmotion("neutral");
+    } else if (device_state_ != kDeviceStateActivating &&
+               device_state_ != kDeviceStateStarting &&
+               device_state_ != kDeviceStateWifiConfiguring &&
+               device_state_ != kDeviceStateAudioTesting &&
+               device_state_ != kDeviceStateUpgrading) {
+        SetDeviceState(kDeviceStateIdle);
+    }
+}
+
+void Application::ApplyVoiceUiStop() {
+    voice_ui_active_ = false;
+    TearDownVoiceAudioPaths(true);
+    ParkVoiceUiProtocol();
+    SoftStopVoiceAudioPaths();
+    ESP_LOGI(TAG, "ApplyVoiceUiStop: AFE destroyed, protocol parked");
 }

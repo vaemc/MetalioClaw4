@@ -143,6 +143,28 @@ struct ActivationBlockedDialogUi {
 ActivationBlockedDialogUi s_activation_dlg;
 bool s_activation_blocked = false;
 bool s_activation_dialog_shows_code = false;
+bool s_voice_ui_held = false;
+
+void schedule_voice_ui_start() {
+    if (s_voice_ui_held) {
+        return;
+    }
+    s_voice_ui_held = true;
+    Application::GetInstance().SetVoiceUiDesired(true);
+}
+
+void schedule_voice_ui_stop() {
+    if (!s_voice_ui_held) {
+        return;
+    }
+    s_voice_ui_held = false;
+    Application::GetInstance().SetVoiceUiDesired(false);
+}
+
+void digital_people_page_leave() {
+    pause_emotion_widget();
+    schedule_voice_ui_stop();
+}
 
 const lv_font_t* bubble_font() { return &font_puhui_30_4; }
 
@@ -407,7 +429,7 @@ void sync_activation_block_state() {
     } else {
         ESP_LOGI(TAG, "DigitalPeople unblocked: device activated/ready");
         close_activation_blocked_dialog();
-        Application::GetInstance().ScheduleStartVoiceUiSession();
+        schedule_voice_ui_start();
     }
 }
 
@@ -420,8 +442,7 @@ void OnSwipeBack() {
     if (indev != nullptr) {
         lv_indev_wait_release(indev);
     }
-    pause_emotion_widget();
-    Application::GetInstance().ScheduleStopVoiceUiSession();
+    digital_people_page_leave();
 
     lv_obj_t* old_scr = lv_screen_active();
     lv_obj_t* home    = HomeScreen::Create();
@@ -437,8 +458,7 @@ void OnScreenUnloaded(lv_event_t* e) {
     if (lv_event_get_target(e) != s_ui.screen) {
         return;
     }
-    pause_emotion_widget();
-    Application::GetInstance().ScheduleStopVoiceUiSession();
+    digital_people_page_leave();
     if (s_activation_guard_timer != nullptr) {
         lv_timer_delete(s_activation_guard_timer);
         s_activation_guard_timer = nullptr;
@@ -446,6 +466,7 @@ void OnScreenUnloaded(lv_event_t* e) {
     s_activation_dlg = ActivationBlockedDialogUi{};
     s_activation_blocked = false;
     s_activation_dialog_shows_code = false;
+    s_voice_ui_held = false;
     s_ui = UiState{};
 }
 
@@ -454,12 +475,12 @@ void OnScreenUnloaded(lv_event_t* e) {
 lv_obj_t* DigitalPeopleScreen::Create() {
     if (s_ui.screen != nullptr) {
         ESP_LOGW(TAG, "Create while previous screen still active, resetting refs");
-        pause_emotion_widget();
-        Application::GetInstance().ScheduleStopVoiceUiSession();
+        digital_people_page_leave();
         if (s_activation_guard_timer != nullptr) {
             lv_timer_delete(s_activation_guard_timer);
             s_activation_guard_timer = nullptr;
         }
+        s_voice_ui_held = false;
         s_ui = UiState{};
     }
 
@@ -564,12 +585,11 @@ void DigitalPeopleScreen::LifecycleCallback(screen_lifecycle_event_t event) {
             log_activation_blocked();
         } else {
             ESP_LOGI(TAG, "load: digital_people_screen -> schedule voice UI start");
-            Application::GetInstance().ScheduleStartVoiceUiSession();
+            schedule_voice_ui_start();
         }
     } else {
         ESP_LOGI(TAG, "unload: digital_people_screen -> schedule voice UI stop");
-        pause_emotion_widget();
-        Application::GetInstance().ScheduleStopVoiceUiSession();
+        digital_people_page_leave();
     }
 }
 

@@ -11,9 +11,8 @@
 //   - 表情：EAF 全屏居中播放 system/chat/{emotion}.eaf，底部字幕叠加；
 //           点击内容区可显隐 Header
 //
-// 语音会话：LOAD 时 ScheduleStartVoiceUiSession 开唤醒词；
-// UNLOAD / 返回 时先停 EAF，再 ScheduleStopVoiceUiSession（带 epoch，防切换误关）。
-// 唤醒词仅在聊天/数字人会话内运行（见 Application::voice_ui_active_）。
+// 语音会话：LOAD 时 SetVoiceUiDesired(true)；UNLOAD/返回 时 false，
+// 立刻 destroy 唤醒词 AFE（esp-sr 内部任务否则常驻高 CPU）。
 //
 // 消息 / 表情由 LVAdapterDisplay 注入；未激活时全屏拦截弹窗。
 // Header：返回 + 标题/状态 + 右侧菜单（表情/聊天/打断/清空）。

@@ -124,6 +124,8 @@ ViewMode s_view_mode = ViewMode::Chat;
 bool s_activation_blocked = false;
 bool s_activation_dialog_shows_code = false;
 bool s_header_visible = true;
+// 本页是否已 Acquire 语音会话；leave 幂等，避免 swipe+UNLOAD+UNLOADED 三次 Release。
+bool s_voice_ui_held = false;
 
 // 当前请求的情绪名；s_applied_emotion 记录已成功 set_src 的名字，避免重复加载。
 char s_current_emotion[kEmotionNameMax + 1] = "neutral";
@@ -238,17 +240,29 @@ void ensure_emotion_eaf() {
 }
 
 bool is_device_activated();  // 前向声明
+void delete_timer(lv_timer_t*& timer);
 
 void schedule_voice_ui_start() {
-    Application::GetInstance().ScheduleStartVoiceUiSession();
+    if (s_voice_ui_held) {
+        return;
+    }
+    s_voice_ui_held = true;
+    Application::GetInstance().SetVoiceUiDesired(true);
 }
 
 void schedule_voice_ui_stop() {
-    Application::GetInstance().ScheduleStopVoiceUiSession();
+    if (!s_voice_ui_held) {
+        return;
+    }
+    s_voice_ui_held = false;
+    Application::GetInstance().SetVoiceUiDesired(false);
 }
 
-// 离开聊天页：先在 LVGL 线程停 EAF，再 Schedule 停语音会话。
+// 离开聊天页：先停 EAF，再 desired=false（立刻 destroy 唤醒词 AFE）。
 void chat_page_leave() {
+    // 离开时先停定时器，避免卸载过程中继续刷状态/轮询吃 CPU
+    delete_timer(s_ui.state_timer);
+    delete_timer(s_ui.activation_guard_timer);
     stop_emotion_eaf();
     schedule_voice_ui_stop();
 }
@@ -962,6 +976,7 @@ void on_screen_unloaded(lv_event_t* e) {
     s_activation_blocked = false;
     s_activation_dialog_shows_code = false;
     s_header_visible = true;
+    s_voice_ui_held = false;
     s_last_device_state = kDeviceStateUnknown;
     s_applied_emotion[0] = '\0';
 }

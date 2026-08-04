@@ -432,7 +432,8 @@ private:
         esp_lcd_panel_io_handle_t tp_io_handle = NULL;
         esp_lcd_panel_io_i2c_config_t tp_io_config = {};
         tp_io_config.dev_addr = dev_addr;
-        tp_io_config.scl_speed_hz = 400 * 1000;
+        // 与 BQ27220(100k) 同总线；400k 在总线抖动时更容易 clear-bus 失败
+        tp_io_config.scl_speed_hz = 200 * 1000;
         tp_io_config.control_phase_bytes = 1;
         tp_io_config.dc_bit_offset = 0;
         tp_io_config.lcd_cmd_bits = 16;
@@ -479,9 +480,15 @@ private:
             return;
         }
 
+        // probe 比普通事务更冲；未找到时指数退避，在线后低频巡检，减轻 I2C 争用。
+        uint32_t interval_ms = 1000;
+        constexpr uint32_t kMinIntervalMs = 1000;
+        constexpr uint32_t kMaxIntervalMs = 8000;
+        constexpr uint32_t kOnlineIntervalMs = 5000;
+
         while (1) {
-            vTaskDelay(pdMS_TO_TICKS(500));
-            board->err = i2c_master_probe(board->i2c_bus_, 0x60, 100);
+            vTaskDelay(pdMS_TO_TICKS(interval_ms));
+            board->err = i2c_master_probe(board->i2c_bus_, 0x60, 50);
             if (board->err == ESP_OK) {
                 board->c_is_found_0x60 = true;
                 if (!board->init0x60) {
@@ -492,8 +499,16 @@ private:
                 if (board->c_is_found_0x60 != board->l_is_found_0x60) {
                     board->wxcho->write0x1e();
                 }
+                interval_ms = kOnlineIntervalMs;
             } else {
                 board->c_is_found_0x60 = false;
+                if (interval_ms < kMaxIntervalMs) {
+                    interval_ms = interval_ms < kMinIntervalMs ? kMinIntervalMs
+                                                              : interval_ms * 2;
+                    if (interval_ms > kMaxIntervalMs) {
+                        interval_ms = kMaxIntervalMs;
+                    }
+                }
             }
             board->l_is_found_0x60 = board->c_is_found_0x60;
         }

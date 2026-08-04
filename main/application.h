@@ -64,14 +64,11 @@ public:
     AudioService& GetAudioService() { return audio_service_; }
 
     // 语音 UI 会话（聊天页 / 数字人页）：唤醒词仅在会话内开启。
-    // 页面侧请用 Schedule*，勿在 LVGL worker 里同步跑重逻辑。
-    // Stop 带 epoch：聊天↔数字人切换时，后到的 Start 会使旧 Stop 失效，避免会话被误关。
-    void StartVoiceUiSession();
-    void StopVoiceUiSession(uint32_t epoch);
-    void ScheduleStartVoiceUiSession();
-    void ScheduleStopVoiceUiSession();
+    // desired=false：立刻软停（停 Feed / disable_wakenet），延迟硬 destroy AFE，
+    // 以便快速再进聊天/数字人时复用引擎，避免低内存下重建崩溃。
+    void SetVoiceUiDesired(bool desired);
     bool IsVoiceUiActive() const { return voice_ui_active_; }
-    uint32_t VoiceUiEpoch() const { return voice_ui_epoch_; }
+    bool IsVoiceUiDesired() const { return voice_ui_desired_; }
 
     bool HasPendingActivation() const {
         return !activation_suspended_ && !pending_activation_code_.empty();
@@ -94,6 +91,8 @@ private:
     std::unique_ptr<Protocol> protocol_;
     EventGroupHandle_t event_group_ = nullptr;
     esp_timer_handle_t clock_timer_handle_ = nullptr;
+    esp_timer_handle_t voice_ui_release_timer_ = nullptr;
+    esp_timer_handle_t voice_ui_start_retry_timer_ = nullptr;
     volatile DeviceState device_state_ = kDeviceStateUnknown;
     ListeningMode listening_mode_ = kListeningModeAutoStop;
     AecMode aec_mode_ = kAecOff;
@@ -103,10 +102,25 @@ private:
     volatile bool activation_suspended_ = false;
     // 仅在 Application::Start() 末尾首次进入 Idle 后置位；starting/activating 期间为 false。
     volatile bool boot_ready_ = false;
-    // 聊天/数字人页持有的对话会话；false 时 Idle 不得开唤醒词。
+    // UI 期望：页面 enter/leave 写入；Sync 在主循环对齐实际会话。
+    volatile bool voice_ui_desired_ = false;
+    // 实际会话：true 时 Idle 才允许开唤醒词。
     volatile bool voice_ui_active_ = false;
-    // Start 递增；ScheduleStop 捕获当时的 epoch，过期则跳过。
-    uint32_t voice_ui_epoch_ = 0;
+    // 使延迟 Release / 启动重试失效（leave/enter 递增）。
+    volatile uint32_t voice_ui_epoch_ = 0;
+    uint32_t voice_ui_pending_release_epoch_ = 0;
+    uint32_t voice_ui_pending_retry_epoch_ = 0;
+
+    void SyncVoiceUiSession();
+    void TearDownVoiceAudioPaths(bool release_wake_word);
+    void SoftStopVoiceAudioPaths();
+    void ParkVoiceUiProtocol();
+    void ApplyVoiceUiStart();
+    void ApplyVoiceUiStop();
+    void ScheduleVoiceUiHardRelease(uint32_t epoch);
+    void CancelVoiceUiHardRelease();
+    void ScheduleVoiceUiStartRetry(uint32_t epoch);
+    bool TryEnableWakeWordForVoiceUi();
 
     bool has_server_time_ = false;
     bool aborted_ = false;

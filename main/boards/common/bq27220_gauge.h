@@ -93,6 +93,7 @@ private:
 
     int  consecutive_err_  = 0;   // 连续读失败计数，用于警告去抖
     int  retry_counter_    = 0;   // GetBatteryLevel 中的重挂节流
+    int64_t cooldown_until_us_ = 0;  // 总线异常后暂停读，避免狂刷
 
     float filter_buf_[kFilterSize] = {0};
     int   filter_idx_      = 0;

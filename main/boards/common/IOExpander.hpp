@@ -72,8 +72,9 @@ public:
         RST_4G,           // 4G module reset
         PA,               // audio PA enable
         ACCEL_INT,        // accelerometer interrupt (active-low input)
-        USB_INSERT_DET,   // USB 插入检测（P1-2，输入；电平含义见原理图）
+        USB_INSERT_DET,   // USB 插入检测（P1-2，输入；高=插入，低=未插入）
         WIRELESS_CHARGE_DET,  // 无线充电检测（P1-3，输入；电平含义见原理图）
+        USB_OTG_SW,       // USB OTG 供电路径（P1-4，输出；高=对外供电，低=充电/关闭）
         kPinCount,        // sentinel; keep last
     };
 
@@ -112,6 +113,7 @@ public:
         {Pin::ACCEL_INT,           9,  Direction::kInput },  // 加速度传感器中断（外部输入）
         {Pin::USB_INSERT_DET,      10, Direction::kInput },  // USB 插入检测 P1-2（外部输入）
         {Pin::WIRELESS_CHARGE_DET, 11, Direction::kInput },  // 无线充电检测 P1-3（外部输入）
+        {Pin::USB_OTG_SW,          12, Direction::kOutput},  // USB OTG 供电开关 P1-4
     };
 
     static IOExpander& getInstance() {
@@ -137,6 +139,7 @@ public:
             case Pin::ACCEL_INT:           return "ACCEL_INT";
             case Pin::USB_INSERT_DET:      return "USB_INSERT_DET";
             case Pin::WIRELESS_CHARGE_DET: return "WIRELESS_CHARGE_DET";
+            case Pin::USB_OTG_SW:          return "USB_OTG_SW";
             default:                       return "?";
         }
     }
@@ -647,7 +650,8 @@ private:
     // deferred until after the mutex is released (so a callback can safely
     // call back into onClick / onLongPress / setLevel without deadlocking).
     // ----------------------------------------------------------------------
-    static constexpr uint32_t kMonitorPollMs   = 50;     // 20 Hz polling
+    static constexpr uint32_t kMonitorPollMs   = 100;    // 10 Hz：与触摸共享 I2C，降低争用
+    static constexpr uint32_t kMonitorBackoffMs = 300;   // 读失败后短暂退避
     static constexpr uint32_t kMonitorStackSz  = 3 * 1024;
     static constexpr UBaseType_t kMonitorPrio  = 4;
     static constexpr BaseType_t  kMonitorCore  = 0;
@@ -695,16 +699,19 @@ private:
         // callback can re-enter onClick / onLongPress / setLevel without
         // deadlocking.
         std::vector<std::function<void()>> pending;
+        uint32_t consecutive_i2c_err = 0;
 
         while (true) {
             pending.clear();
             const int64_t now_us = esp_timer_get_time();
+            bool any_read_fail = false;
 
             {
                 std::lock_guard<std::mutex> lock(handlers_mutex_);
                 for (auto& h : click_handlers_) {
                     bool level = false;
                     if (readLevel(h.pin, &level) != ESP_OK) {
+                        any_read_fail = true;
                         continue;
                     }
                     const bool is_pressed = (level == h.pressed_level);
@@ -723,8 +730,8 @@ private:
                 for (auto& h : handlers_) {
                     bool level = false;
                     if (readLevel(h.pin, &level) != ESP_OK) {
-                        // I2C transient or pin no longer mapped/input;
-                        // skip this tick without disturbing state.
+                        // I2C transient：本轮跳过，不扰动边沿状态；总线坏时退避。
+                        any_read_fail = true;
                         continue;
                     }
                     const bool is_pressed = (level == h.pressed_level);
@@ -752,7 +759,15 @@ private:
                 cb();
             }
 
-            vTaskDelay(pdMS_TO_TICKS(kMonitorPollMs));
+            if (any_read_fail) {
+                if (consecutive_i2c_err < 8) {
+                    consecutive_i2c_err++;
+                }
+                vTaskDelay(pdMS_TO_TICKS(kMonitorBackoffMs));
+            } else {
+                consecutive_i2c_err = 0;
+                vTaskDelay(pdMS_TO_TICKS(kMonitorPollMs));
+            }
         }
     }
 
