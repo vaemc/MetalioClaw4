@@ -9,6 +9,7 @@
 #include "application.h"
 #include "home_screen/home_screen.h"
 #include "standby_screen/standby_screen.h"
+#include "usb_extend_screen.h"
 
 namespace {
 
@@ -68,6 +69,13 @@ void OnLeaveStandbyAsync(void* /*arg*/) { StandbyScreen::ReturnHome(); }
 void OnShortPress() {
     const char* screen = PwrKey_ActiveScreen();
     ESP_LOGI(TAG, "short-press on screen=%s (depth=%d)", screen, s_depth);
+
+    // 副屏 USB 扩展运行中：短按退出扩展显示（LVGL 可能已 pause）
+    if (usb_extend_screen_is_running()) {
+        ESP_LOGI(TAG, "dispatch: stop USB extend screen");
+        usb_extend_screen_stop();
+        return;
+    }
 
     if (std::strcmp(screen, kHomeScreen) == 0) {
         ESP_LOGI(TAG, "dispatch: enter standby_screen");

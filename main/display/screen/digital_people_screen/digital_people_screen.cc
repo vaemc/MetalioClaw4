@@ -1,4 +1,6 @@
 #include "digital_people_screen.h"
+#include "digital_people_prefs.h"
+#include "digital_people_settings_screen.h"
 #include "i18n.h"
 
 #include <cstdio>
@@ -24,16 +26,17 @@ constexpr const char* TAG = "DigitalPeopleScreen";
 constexpr int32_t  kPanelSize    = 720;
 constexpr uint32_t kColorBg      = 0x000000;          // 纯黑背景
 
-// 表情资源目录与扩展名（改 DIGITAL_PEOPLE_EMOTION_EXT 切换格式）：
-//   完整路径 = kEmotionDir + 大类名 + kEmotionExt
+// 表情资源目录：完整路径 = kEmotionDir + 大类名 + DigitalPeoplePrefs::GetEmotionExt()
 //   例: "S:/sdcard/system/emotion/loving.sjpg"
 // 大类名来自 LVAdapterDisplay::SetEmotion 里的 GetEmoteCategory()，
 // 取值范围被收敛到 6 个：crying / happy / loving / neutral / surprised /
 // thinking。所有资源都放在 SD 卡的 system/emotion/ 目录下。
+// 格式（.eaf / .sjpg）与 EAF 帧间隔由 NVS（DigitalPeoplePrefs）决定。
 constexpr const char* kEmotionDir = "S:/sdcard/system/emotion/";
 constexpr const char* kEmotionPosixDir = "/sdcard/system/emotion/";
-constexpr const char* kEmotionExt = DIGITAL_PEOPLE_EMOTION_EXT;
 constexpr const char* kDefaultEmotion = "neutral";
+constexpr uint32_t kLongPressSettingsMs = 5000;
+constexpr int32_t kLongPressMoveSlopPx = 24;
 
 // 端侧必须存在的 6 个大类资源；缺任意一个都视为资源包未就绪。
 constexpr const char* kRequiredEmotions[] = {
@@ -57,16 +60,18 @@ const char* EmotionCategoryName(const char* category) {
 
 const char* BuildEmotionPath(const char* category) {
     std::snprintf(s_emotion_path_buf, sizeof(s_emotion_path_buf), "%s%s%s",
-                  kEmotionDir, EmotionCategoryName(category), kEmotionExt);
+                  kEmotionDir, EmotionCategoryName(category),
+                  DigitalPeoplePrefs::GetEmotionExt());
     return s_emotion_path_buf;
 }
 
-bool EmotionUsesEaf() { return std::strcmp(kEmotionExt, ".eaf") == 0; }
+bool EmotionUsesEaf() { return DigitalPeoplePrefs::UsesEaf(); }
 
 void SetEmotionSrc(lv_obj_t* widget, const char* category) {
     const char* path = BuildEmotionPath(category);
     if (EmotionUsesEaf()) {
         lv_eaf_set_src(widget, path);
+        lv_eaf_set_frame_delay(widget, DigitalPeoplePrefs::GetFrameDelayMs());
     } else {
         lv_image_set_src(widget, path);
     }
@@ -135,6 +140,10 @@ void pause_emotion_widget() {
 }
 
 lv_timer_t* s_activation_guard_timer = nullptr;
+lv_timer_t* s_long_press_timer = nullptr;
+bool s_long_press_armed = false;
+int16_t s_long_press_start_x = 0;
+int16_t s_long_press_start_y = 0;
 
 // 未激活拦截：全屏模态弹窗，不可关闭，仅能通过返回键离开。
 struct ActivationBlockedDialogUi {
@@ -144,6 +153,83 @@ ActivationBlockedDialogUi s_activation_dlg;
 bool s_activation_blocked = false;
 bool s_activation_dialog_shows_code = false;
 bool s_voice_ui_held = false;
+
+void cancel_long_press_timer() {
+    if (s_long_press_timer != nullptr) {
+        lv_timer_delete(s_long_press_timer);
+        s_long_press_timer = nullptr;
+    }
+    s_long_press_armed = false;
+}
+
+void digital_people_page_leave();
+void open_digital_people_settings();
+
+void on_long_press_settings_timer(lv_timer_t* /*timer*/) {
+    s_long_press_timer = nullptr;
+    s_long_press_armed = false;
+    if (s_ui.screen == nullptr || s_activation_blocked) {
+        return;
+    }
+    ESP_LOGI(TAG, "long-press 5s -> digital people settings");
+    open_digital_people_settings();
+}
+
+void open_digital_people_settings() {
+    cancel_long_press_timer();
+    lv_indev_t* indev = lv_indev_active();
+    if (indev != nullptr) {
+        lv_indev_wait_release(indev);
+    }
+    digital_people_page_leave();
+
+    lv_obj_t* old_scr = lv_screen_active();
+    lv_obj_t* settings = DigitalPeopleSettingsScreen::Create();
+    lv_screen_load(settings);
+    if (old_scr != nullptr && old_scr != settings) {
+        lv_obj_delete_async(old_scr);
+    }
+}
+
+void OnLongPressPressed(lv_event_t* e) {
+    if (s_activation_blocked || s_ui.screen == nullptr) {
+        return;
+    }
+    lv_indev_t* indev = lv_event_get_indev(e);
+    if (indev == nullptr) {
+        return;
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+    cancel_long_press_timer();
+    s_long_press_armed = true;
+    s_long_press_start_x = static_cast<int16_t>(p.x);
+    s_long_press_start_y = static_cast<int16_t>(p.y);
+    s_long_press_timer =
+        lv_timer_create(on_long_press_settings_timer, kLongPressSettingsMs,
+                        nullptr);
+    lv_timer_set_repeat_count(s_long_press_timer, 1);
+}
+
+void OnLongPressPressing(lv_event_t* e) {
+    if (!s_long_press_armed) {
+        return;
+    }
+    lv_indev_t* indev = lv_event_get_indev(e);
+    if (indev == nullptr) {
+        return;
+    }
+    lv_point_t p;
+    lv_indev_get_point(indev, &p);
+    const int dx = p.x - s_long_press_start_x;
+    const int dy = p.y - s_long_press_start_y;
+    if (dx > kLongPressMoveSlopPx || dx < -kLongPressMoveSlopPx ||
+        dy > kLongPressMoveSlopPx || dy < -kLongPressMoveSlopPx) {
+        cancel_long_press_timer();
+    }
+}
+
+void OnLongPressReleased(lv_event_t* /*e*/) { cancel_long_press_timer(); }
 
 void schedule_voice_ui_start() {
     if (s_voice_ui_held) {
@@ -171,16 +257,17 @@ const lv_font_t* bubble_font() { return &font_puhui_30_4; }
 bool EmotionFileExists(const char* name) {
     char path[96];
     std::snprintf(path, sizeof(path), "%s%s%s", kEmotionPosixDir, name,
-                  kEmotionExt);
+                  DigitalPeoplePrefs::GetEmotionExt());
     struct stat st;
     return stat(path, &st) == 0 && S_ISREG(st.st_mode);
 }
 
 void LogMissingEmotionFiles() {
+    const char* ext = DigitalPeoplePrefs::GetEmotionExt();
     for (size_t i = 0; i < kRequiredEmotionCount; ++i) {
         if (!EmotionFileExists(kRequiredEmotions[i])) {
             ESP_LOGW(TAG, "missing emotion file: %s%s%s", kEmotionPosixDir,
-                     kRequiredEmotions[i], kEmotionExt);
+                     kRequiredEmotions[i], ext);
         }
     }
 }
@@ -438,6 +525,7 @@ void on_activation_guard_timer(lv_timer_t* /*timer*/) {
 }
 
 void OnSwipeBack() {
+    cancel_long_press_timer();
     lv_indev_t* indev = lv_indev_active();
     if (indev != nullptr) {
         lv_indev_wait_release(indev);
@@ -459,6 +547,7 @@ void OnScreenUnloaded(lv_event_t* e) {
         return;
     }
     digital_people_page_leave();
+    cancel_long_press_timer();
     if (s_activation_guard_timer != nullptr) {
         lv_timer_delete(s_activation_guard_timer);
         s_activation_guard_timer = nullptr;
@@ -476,6 +565,7 @@ lv_obj_t* DigitalPeopleScreen::Create() {
     if (s_ui.screen != nullptr) {
         ESP_LOGW(TAG, "Create while previous screen still active, resetting refs");
         digital_people_page_leave();
+        cancel_long_press_timer();
         if (s_activation_guard_timer != nullptr) {
             lv_timer_delete(s_activation_guard_timer);
             s_activation_guard_timer = nullptr;
@@ -489,7 +579,9 @@ lv_obj_t* DigitalPeopleScreen::Create() {
         log_activation_blocked();
     }
 
-    ESP_LOGI(TAG, "create digital people screen");
+    ESP_LOGI(TAG, "create digital people screen (fmt=%s delay=%u)",
+             DigitalPeoplePrefs::GetEmotionExt(),
+             static_cast<unsigned>(DigitalPeoplePrefs::GetFrameDelayMs()));
 
     lv_obj_t* scr = lv_obj_create(nullptr);
     s_ui.screen = scr;
@@ -498,6 +590,7 @@ lv_obj_t* DigitalPeopleScreen::Create() {
     lv_obj_set_style_bg_color(scr, lv_color_hex(kColorBg), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
 
 
     const bool resources_ready = CheckEmotionResourcesReady();
@@ -528,6 +621,10 @@ lv_obj_t* DigitalPeopleScreen::Create() {
     }
 
     screen_attach_swipe_back(scr, OnSwipeBack);
+    lv_obj_add_event_cb(scr, OnLongPressPressed, LV_EVENT_PRESSED, nullptr);
+    lv_obj_add_event_cb(scr, OnLongPressPressing, LV_EVENT_PRESSING, nullptr);
+    lv_obj_add_event_cb(scr, OnLongPressReleased, LV_EVENT_RELEASED, nullptr);
+    lv_obj_add_event_cb(scr, OnLongPressReleased, LV_EVENT_PRESS_LOST, nullptr);
     lv_obj_add_event_cb(scr, OnScreenUnloaded, LV_EVENT_SCREEN_UNLOADED,
                         nullptr);
 

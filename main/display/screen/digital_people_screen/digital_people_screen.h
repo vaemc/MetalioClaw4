@@ -3,16 +3,12 @@
 #include "lvgl.h"
 #include "screen_util.h"
 
-// 改此项切换表情资源格式：".eaf" / ".jpg" / ".png" / ".sjpg"
-#ifndef DIGITAL_PEOPLE_EMOTION_EXT
-#define DIGITAL_PEOPLE_EMOTION_EXT ".sjpg"
-#endif
-
 // ---------------------------------------------------------------------------
 // DigitalPeopleScreen
 //
 // 720x720 数字人界面：纯黑背景 + 居中显示 SD 卡 system/emotion/ 下的
-// 表情资源（.eaf / .jpg / .png / .sjpg，由 DIGITAL_PEOPLE_EMOTION_EXT 切换）。
+// 表情资源。格式（.eaf / .sjpg）与 EAF 帧间隔由 DigitalPeoplePrefs 从
+// NVS 读取；设置页可通过长按本屏任意位置 5 秒进入。
 // 进入时会检查 6 个大类资源是否齐全；缺失时在屏幕中央提示用户将资源
 // 包放入 SD 卡。
 //
@@ -39,7 +35,7 @@ public:
     // category 必须是 6 个大类之一：crying / happy / loving / neutral /
     // surprised / thinking。文件路径会被拼成
     //   S:/sdcard/system/emotion/{category}{ext}
-    // ext 由 DIGITAL_PEOPLE_EMOTION_EXT 决定（.eaf / .jpg / .png / .sjpg）。
+    // ext 由 DigitalPeoplePrefs（NVS）决定（.eaf / .sjpg）。
     // 屏幕不在前台时也可以调用：本类会记住当前大类，下次 Create()
     // 时直接加载请求过的那一张，不会丢失。
     static void SetEmotion(const char* category);

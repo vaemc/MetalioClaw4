@@ -32,7 +32,7 @@
 14. [编译与烧录](#14-编译与烧录)
 15. [调试与常见问题](#15-调试与常见问题)
 
-> 近期补充：**UI 多语言**、**待机屏**、**设置 / 测试**、**ESPClaw 双系统**、**SD 虚拟 U 盘**、**聊天表情模式**、**网络电台**、**录音（Opus + ASR 转写）** 等，见对应章节。
+> 近期补充：**数字人设置（EAF/SJPG）**、**翻译**、**AI 生图**、**聊天打断/菜单**、**唤醒词会话持有**、**OTA 默认 URL 写 NVS**、**UI 多语言**、**待机屏**、**ESPClaw 双系统**、**SD 虚拟 U 盘**、**网络电台**、**录音（Opus + ASR）** 等，见对应章节。
 
 ---
 
@@ -170,6 +170,8 @@ Metalio Claw4 自带 20+ 内置 App，开发者可基于现有硬件与软件能
 |:-------- |:--------------------------------- |
 | **拍照学习** | 相机、数字人、SD 卡资源管理                   |
 | **会议记录** | 聊天、录音（Opus + 云端转写）、OpenClaw、蓝牙音频、电话 |
+| **同声传译** | 翻译（Sonicloud 实时识别 / 译文） |
+| **创意生图** | AI 生图（语音描述 → 文生图） |
 | **智能中控** | 语音对话 + MCP 协议控制 IoT 设备            |
 | **户外导航** | GPS 定位（GPS / WiFi / 基站 Tab）、4G 联网 |
 | **休闲娱乐** | 音乐（蓝牙音箱模式）、电台（网络 HLS）、2048、主题切换 |
@@ -182,7 +184,7 @@ Metalio Claw4 自带 20+ 内置 App，开发者可基于现有硬件与软件能
 ```mermaid
 flowchart TB
     ui["用户交互层<br/>720×720 LVGL 9 触控 UI · 语音唤醒 · 按键 PWR_KEY"]
-    apps["应用层<br/>聊天 · 电台 · 录音 · OpenClaw · 相机 · GPS · 天气 · 音乐 · 数字人 · ..."]
+    apps["应用层<br/>聊天 · 数字人 · 翻译 · AI生图 · 电台 · 录音 · OpenClaw · 相机 · GPS · ..."]
     svc["服务层<br/>AudioService · GpsService · SdCardManager · MCP Server"]
     proto["协议层<br/>WebSocket · MQTT+UDP · OpenClaw HTTP API"]
     board["板级抽象 Board<br/>DualNetworkBoard · Display · AudioCodec · Backlight · Gauge"]
@@ -432,9 +434,10 @@ stateDiagram-v2
     activating --> idle
 ```
 
-- **idle**：待机，等待唤醒词
+- **idle**：待机；**仅聊天 / 数字人等语音 UI 页前台时**才会持有唤醒词引擎（`SetVoiceUiDesired`），回桌面后释放，降低空闲 CPU
 - **listening**：录音中，流式上传 ASR
 - **speaking**：播放 TTS 回复
+- **OTA URL**：启动时若 NVS `wifi/ota_url` 为空，写入默认 `https://api.tenclass.net/xiaozhi/ota/`；已有值则沿用
 - **connecting**：建立 WebSocket / MQTT 连接
 
 ### 9.3 板级初始化顺序
@@ -517,9 +520,9 @@ API 基址定义于 `main/api_endpoints.h`。
 
 | App | 标识 | 说明 |
 |:---|:---|:---|
-| 聊天 | chat | 小智 AI 语音对话；支持**文字气泡**与 **EAF 表情**两种视图（§11.1） |
+| 聊天 | chat | 小智 AI 语音对话；**文字气泡** / **EAF 表情**；菜单含打断开关（§11.1） |
 | 网络配置 | wifi | Wi-Fi / 4G 切换、SIM 卡切换（内置卡 / 外置卡） |
-| 数字人 | digital_people | SD 卡 SJPG 表情动画 |
+| 数字人 | digital_people | SD 卡表情（SJPG / EAF）；长按进设置（§11.4） |
 | 电话 | call | 4G 通话（**仅外置卡**） |
 | 音乐 | music | 蓝牙音箱模式（BT 模式 3），支持手机推送歌词显示 |
 | 日历 | calendar | 日历查看 |
@@ -538,15 +541,18 @@ API 基址定义于 `main/api_endpoints.h`。
 | 系统信息 | info | 固件版本 / 芯片 / MAC |
 | 主题 | theme | 4 套图标主题 |
 | 测试 | test | 厂测入口：自动测试、压力测试、硬件测试等 |
-| 设置 | settings | 音量 / 亮度 / 待机 / **语言（中英）** / 蓝牙模式等 |
+| 设置 | settings | 音量 / 亮度 / 待机 / **语言（中英）** / 蓝牙 / 充电（有充电 IC 时）等 |
 | 电台 | radio | 网络 HLS 电台直播 + 频谱可视化（§11.2） |
 | 录音 | recording | SD 卡 Opus 录音 / 列表播放 / 云端 ASR 转写（§11.3） |
+| AI 生图 | ai_image_gen | 语音描述 → 文生图，多图 Tab 与下载（§11.6） |
+| 翻译 | translate | Sonicloud 实时同声传译（§11.5） |
 
 #### 设置（settings）
 
 - **语言**：运行时切换简体中文 / English（`I18n::SetLocale`，写入 NVS）；切换后重建主页生效
 - **待机**：配置「进入待机」与「累计关机」时长（分钟，0=禁用）
 - **蓝牙**：原独立「蓝牙配置」能力并入设置 Tab（模式 1/2/3、扫描配对、复位蓝牙）
+- **充电**：检测到板载充电 IC（如 CX25601N）时显示电流档位；无芯片则隐藏该 Tab
 - 音量、背光等亦在此调节（不再单独提供「屏幕亮度」主屏图标）
 
 #### 测试（test）
@@ -555,9 +561,11 @@ API 基址定义于 `main/api_endpoints.h`。
 
 #### 11.1 聊天（chat）
 
-- Header 可在 **聊天** / **表情** 两种模式间切换
-- **聊天模式**：左右文字气泡（助手/系统在左，用户在右）
-- **表情模式**：播放 SD 卡上的 EAF 动画，路径为 `/sdcard/system/chat/{emotion}.eaf`（情绪名由服务端下发，需为合法 `[A-Za-z0-9_-]`）；底部一条白色字幕显示最新消息
+- Header 右侧**下拉菜单**：表情 / 聊天模式切换、**打断（设备端 AEC）**开关、清空（仅聊天模式显示）
+- **聊天模式**：左右文字气泡（助手/系统在左，用户在右）；背景为黑色
+- **表情模式**：全屏居中播放 SD 卡 EAF，路径 `/sdcard/system/chat/{emotion}.eaf`（情绪名由服务端下发，需为合法 `[A-Za-z0-9_-]`）；底部白色字幕显示最新消息；点击 Header 区域可显隐顶栏
+- **打断偏好**：写入 NVS，开机恢复；默认关。开启后在语音处理中启用设备端 AEC（全双工打断）
+- **语音会话**：仅本页（及数字人）前台时持有唤醒词引擎（`SetVoiceUiDesired`）；回桌面后软停并延迟销毁 AFE，避免空闲占 CPU、反复进出崩溃
 - 资源需放在 SD 卡对应目录；无卡或文件缺失时表情模式不可用
 
 #### 11.2 电台（radio）
@@ -569,10 +577,32 @@ API 基址定义于 `main/api_endpoints.h`。
 #### 11.3 录音（recording）
 
 - **依赖 SD 卡**：未挂载时仅提示，不可用
-- Tab **录音**：开始 / 结束录音并计时；保存为 **Ogg Opus**（`/sdcard/recordings/REC_*.opus`），体积远小于 PCM WAV
+- Tab **录音**：开始 / 结束录音并计时；保存为 **Ogg Opus**（`/sdcard/recordings/REC_*.opus`），体积远小于 PCM WAV；单次上限约 **30 分钟**
 - Tab **列表**：列出 `.opus`（兼容旧 `.wav`）；点击进入**详情页**（非直接播放）
-- **详情页**：播放 / 停止；**录音转写** 将文件 multipart 上传至 `POST /api/v1/asr/transcribe`（`X-Device-Id`），展示全文、时长、对话行、摘要
+- **详情页**：播放 / 停止；**录音转写**异步上传至 `POST /api/v1/asr/transcribe`（`X-Device-Id`），进详情后再查询结果；展示全文、时长、对话行、摘要
 - 接口基址见 `main/api_endpoints.h`（`kAsrTranscribe`）
+
+#### 11.4 数字人（digital_people）
+
+- 720×720 全屏表情；资源目录 `/sdcard/system/emotion/`，大类：`crying` / `happy` / `loving` / `neutral` / `surprised` / `thinking`
+- **长按屏幕约 5 秒**进入数字人设置（仅左上角返回，无右滑返回，避免误触）
+- 设置页可选资源格式：
+  - **SJPG 静态图**：`{category}.sjpg`（默认）
+  - **EAF 动画**：`{category}.eaf`；可调帧间隔 `lv_eaf_set_frame_delay`（**10~500 ms**，默认 30）
+- 偏好写入 NVS：`ui/dp_fmt`、`ui/dp_delay_ms`；返回数字人页后重建生效
+- 未激活设备时拦截弹窗，不可使用语音；已激活时与聊天相同，持有语音 UI / 唤醒词会话
+
+#### 11.5 翻译（translate）
+
+- Sonicloud **实时同声传译**：按住说话识别原文，展示译文
+- 需已连接 **Wi‑Fi**（未联网时拦截提示）；源/目标语言不可相同
+- 依赖板端音频链路；忙或未就绪时有对应提示
+
+#### 11.6 AI 生图（ai_image_gen）
+
+- 语音描述 → 云端**文生图**；生成中显示已用时，完成后多图 Tab 浏览
+- 支持下载到本地；需 **Wi‑Fi**（未联网时拦截）
+- 底部按钮区与 Tab 交互；生成过程中相关滑动手势受限以免误触
 
 ---
 
@@ -828,7 +858,7 @@ idf.py -p /dev/ttyACM0 monitor
 
 | 路径 | 用途 |
 |:---|:---|
-| `/sdcard/system/emotion/` | 数字人 SJPG 表情 |
+| `/sdcard/system/emotion/` | 数字人表情：`{category}.sjpg` 或 `.eaf`（设置页切换） |
 | `/sdcard/system/chat/` | 聊天表情模式 `.eaf`（`{emotion}.eaf`） |
 | `/sdcard/recordings/` | 录音 App 保存的 Opus（及旧 WAV） |
 
@@ -867,8 +897,11 @@ idf.py -p /dev/ttyACM0 monitor
 | `CameraScreen`   | 摄像头预览             |
 | `OpenClawScreen` | OpenClaw 对话       |
 | `ChatScreen`     | 聊天 / 表情         |
+| `DigitalPeopleScreen` | 数字人 / 设置 |
 | `RadioScreen`    | 网络电台            |
 | `RecordingScreen`| 录音 / ASR 转写     |
+| `TranslateScreen`| 同声传译 |
+| `AiImageGenScreen` | AI 生图 |
 | `系统监控`           | CPU / 内存 / 电池周期日志 |
 
 ### 15.2 系统监控

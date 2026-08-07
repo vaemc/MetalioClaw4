@@ -32,7 +32,7 @@
 14. [Compilation and Flashing](#14-compilation-and-flashing)
 15. [Debugging and Common Issues](#15-debugging-and-common-issues)
 
-> Recent additions: **runtime UI i18n**, **standby screen**, **Settings / Test**, **ESPClaw dual-boot**, **SD virtual USB drive**, **chat emotion mode**, **internet radio**, **recording (Opus + ASR transcription)**, and related sections below.
+> Recent additions: **Digital Human settings (EAF/SJPG)**, **Translate**, **AI Image Gen**, **chat interrupt menu**, **session-scoped wake-word**, **default OTA URL → NVS**, **runtime UI i18n**, **standby screen**, **ESPClaw dual-boot**, **SD virtual USB**, **internet radio**, **recording (Opus + ASR)**, and related sections below.
 
 ---
 
@@ -170,6 +170,8 @@ Metalio Claw4 ships with 20+ built‑in apps. Developers can **mix, trim, or sec
 |:-------------------------------------------------------------------------------- |:---------------------------------------------------------- |
 | **Photo Learning**                                                               | Camera, Digital Human, SD‑Card Resource Management         |
 | **Conference Recording**                                                         | Chat, Recording (Opus + cloud ASR), OpenClaw, Bluetooth Audio, Phone |
+| **Live Interpretation**                                                          | Translate (Sonicloud realtime ASR / translation)           |
+| **Creative Image Gen**                                                           | AI Image Gen (voice → text‑to‑image)                       |
 | **Smart Controller**                                                             | Voice dialogue + MCP protocol to control IoT devices       |
 | **Outdoor Navigation**                                                           | GPS positioning (GPS / Wi‑Fi / Base‑Station tabs), 4G data |
 | **Entertainment**                                                                | Music (Bluetooth speaker), Radio (HLS), Game, Theme Switching |
@@ -182,7 +184,7 @@ Metalio Claw4 ships with 20+ built‑in apps. Developers can **mix, trim, or sec
 ```mermaid
 flowchart TB
     ui["User Interaction Layer<br/>720x720 LVGL 9 Touch UI · Voice Wake-up · Power Key PWR_KEY"]
-    apps["Application Layer<br/>Chat · Radio · Recording · OpenClaw · Camera · GPS · Weather · Music · Digital Human · ..."]
+    apps["Application Layer<br/>Chat · Digital Human · Translate · AI Image Gen · Radio · Recording · OpenClaw · Camera · GPS · ..."]
     svc["Service Layer<br/>AudioService · GpsService · SdCardManager · MCP Server"]
     proto["Protocol Layer<br/>WebSocket · MQTT+UDP · OpenClaw HTTP API"]
     board["Board Abstraction<br/>DualNetworkBoard · Display · AudioCodec · Backlight · Gauge"]
@@ -434,10 +436,11 @@ stateDiagram-v2
     activating --> idle
 ```
 
-- **idle** – waiting for wake‑word  
+- **idle** – standby; wake‑word engine is held **only while Chat / Digital Human (voice UI) is foreground** (`SetVoiceUiDesired`), released on home to cut idle CPU  
 - **listening** – recording, streaming ASR upstream  
 - **speaking** – playing TTS response  
 - **connecting** – establishing WebSocket / MQTT link  
+- **OTA URL** – on boot, if NVS `wifi/ota_url` is empty, write default `https://api.tenclass.net/xiaozhi/ota/`; otherwise keep NVS value  
 
 ### 9.3 Board Initialization Order
 
@@ -519,9 +522,9 @@ Home‑screen app list (`home_screen.cc` → `kApps[]`):
 
 | App            | ID               | Description                                                              |
 |:-------------- |:---------------- |:------------------------------------------------------------------------ |
-| Chat           | `chat`           | XiaoZhi AI voice chat; **text bubbles** or **EAF emotion** view (§11.1)  |
+| Chat           | `chat`           | XiaoZhi voice chat; **text** / **EAF emotion**; interrupt menu (§11.1)   |
 | Network Config | `wifi`           | Wi‑Fi / 4G switch, SIM swap (internal / external)                        |
-| Digital Human  | `digital_people` | SD‑card SJPG expression animation                                        |
+| Digital Human  | `digital_people` | SD emotions (SJPG / EAF); long‑press settings (§11.4)                    |
 | Phone          | `call`           | 4G calls (**external SIM only**)                                         |
 | Music          | `music`          | Bluetooth speaker mode (BT mode 3), phone‑push lyric display             |
 | Calendar       | `calendar`       | Calendar view                                                            |
@@ -540,15 +543,18 @@ Home‑screen app list (`home_screen.cc` → `kApps[]`):
 | System Info    | `info`           | Firmware version / chip / MAC                                            |
 | Theme          | `theme`          | Four icon‑theme packs                                                    |
 | Test           | `test`           | Factory entry: auto test, stress test, hardware tests, etc.              |
-| Settings       | `settings`       | Volume / brightness / standby / **language (zh/en)** / Bluetooth modes |
+| Settings       | `settings`       | Volume / brightness / standby / **language** / Bluetooth / charge (if IC) |
 | Radio          | `radio`          | Internet HLS radio + spectrum visualizer (§11.2)                         |
 | Recording      | `recording`      | SD Opus record / list playback / cloud ASR (§11.3)                       |
+| AI Image Gen   | `ai_image_gen`   | Voice prompt → text‑to‑image; multi‑image tabs (§11.6)                   |
+| Translate      | `translate`      | Sonicloud realtime interpretation (§11.5)                                |
 
 #### Settings
 
 - **Language**: Runtime switch Simplified Chinese / English (`I18n::SetLocale`, NVS); home rebuilds after change  
 - **Standby**: Configure “enter standby” and “cumulative shutdown” (minutes; 0 = disable)  
 - **Bluetooth**: Former standalone Bluetooth Config lives here (modes 1/2/3, scan & pair, Reset Bluetooth)  
+- **Charge**: Charge‑current presets when a charge IC (e.g. CX25601N) is present; tab hidden otherwise  
 - Volume and backlight are also here (no separate home **Backlight** icon)
 
 #### Test
@@ -557,10 +563,12 @@ Factory / stress entry (`test_screen`): auto tests (fuel gauge / wireless charge
 
 #### 11.1 Chat (`chat`)
 
-- Header toggles **Chat** / **Emotion** modes  
-- **Chat mode**: left/right text bubbles (assistant/system left, user right)  
-- **Emotion mode**: plays SD‑card EAF animations at `/sdcard/system/chat/{emotion}.eaf` (server emotion name; must match `[A-Za-z0-9_-]`); one shared white caption at the bottom shows the latest message  
-- Requires the SD card and files under that directory; emotion mode is unavailable without them  
+- Header **dropdown menu**: Chat / Emotion toggle, **Interrupt (device AEC)** switch, Clear (chat mode only)  
+- **Chat mode**: left/right text bubbles (assistant/system left, user right); black background  
+- **Emotion mode**: full‑screen centered EAF at `/sdcard/system/chat/{emotion}.eaf` (server name; `[A-Za-z0-9_-]`); white caption at bottom; tap header area to show/hide chrome  
+- **Interrupt preference**: NVS‑persisted, default off; enables device AEC for barge‑in while processing  
+- **Voice session**: wake‑word engine is held only while Chat / Digital Human is foreground (`SetVoiceUiDesired`); leaving home soft‑stops then delayed‑destroys AFE  
+- Requires SD assets for emotion mode  
 
 #### 11.2 Radio (`radio`)
 
@@ -571,10 +579,28 @@ Factory / stress entry (`test_screen`): auto tests (fuel gauge / wireless charge
 #### 11.3 Recording (`recording`)
 
 - **Requires SD card**: if unmounted, only a hint is shown  
-- **Record** tab: start / stop with timer; saves **Ogg Opus** to `/sdcard/recordings/REC_*.opus` (much smaller than PCM WAV)  
+- **Record** tab: start / stop with timer; saves **Ogg Opus** to `/sdcard/recordings/REC_*.opus`; ~**30 min** max per clip  
 - **List** tab: lists `.opus` (legacy `.wav` still supported); tap opens a **detail** page (does not play immediately)  
-- **Detail**: play / stop; **Transcribe** uploads the file as multipart to `POST /api/v1/asr/transcribe` (`X-Device-Id`) and shows full text, duration, dialogue lines, and summary  
+- **Detail**: play / stop; **Transcribe** async‑uploads to `POST /api/v1/asr/transcribe` (`X-Device-Id`), then polls when opening detail  
 - API base paths live in `main/api_endpoints.h` (`kAsrTranscribe`)
+
+#### 11.4 Digital Human (`digital_people`)
+
+- Full‑screen emotions under `/sdcard/system/emotion/`; categories: `crying` / `happy` / `loving` / `neutral` / `surprised` / `thinking`  
+- **Long‑press ~5 s** opens settings (top‑left back only; no swipe‑back)  
+- Format options: **SJPG** (`{category}.sjpg`, default) or **EAF** (`{category}.eaf`) with frame delay **10–500 ms** (default 30) via `lv_eaf_set_frame_delay`  
+- NVS: `ui/dp_fmt`, `ui/dp_delay_ms`; returning rebuilds the screen  
+- Activation gate when device not activated; when ready, same voice‑UI / wake‑word session as Chat  
+
+#### 11.5 Translate (`translate`)
+
+- Sonicloud **realtime interpretation**: hold‑to‑talk for source text + translation  
+- Requires **Wi‑Fi** (blocked with hint if offline); source and target languages must differ  
+
+#### 11.6 AI Image Gen (`ai_image_gen`)
+
+- Voice description → cloud **text‑to‑image**; elapsed time while generating; multi‑image tabs afterward  
+- Download to local storage; requires **Wi‑Fi**  
 
 ---
 
@@ -815,7 +841,7 @@ Common paths:
 
 | Path | Purpose |
 |:---|:---|
-| `/sdcard/system/emotion/` | Digital‑human SJPG emotions |
+| `/sdcard/system/emotion/` | Digital‑human emotions: `{category}.sjpg` or `.eaf` (settings) |
 | `/sdcard/system/chat/` | Chat emotion‑mode `.eaf` (`{emotion}.eaf`) |
 | `/sdcard/recordings/` | Recording app Opus files (and legacy WAV) |
 
@@ -854,8 +880,11 @@ Partition‑table offset must be **`0x9000`** (same as edge_agent).
 | `CameraScreen`   | Camera preview                    |
 | `OpenClawScreen` | OpenClaw dialogue                 |
 | `ChatScreen`     | Chat / emotion mode               |
+| `DigitalPeopleScreen` | Digital human / settings     |
 | `RadioScreen`    | Internet radio                    |
 | `RecordingScreen`| Recording / ASR transcription     |
+| `TranslateScreen`| Live interpretation               |
+| `AiImageGenScreen` | AI image generation             |
 | `System Monitor` | CPU / RAM / battery periodic logs |
 
 ### 15.2 System Monitor

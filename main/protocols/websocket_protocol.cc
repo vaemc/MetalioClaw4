@@ -145,6 +145,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
                 }
             }
         } else {
+            // ESP_LOGI(TAG, "json: %s", data);
             // Parse JSON data
             auto root = cJSON_Parse(data);
             auto type = cJSON_GetObjectItem(root, "type");

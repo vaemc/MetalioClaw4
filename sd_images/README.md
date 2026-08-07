@@ -2,10 +2,10 @@
 
 本目录存放数字人等功能的 SD 卡资源。将内容复制到 SD 卡根目录即可使用（保持目录结构不变）。
 
-数字人表情默认使用 **SJPG** 格式（LVGL 分块 JPEG），资源路径为：
+数字人表情默认使用 **SJPG** 格式（LVGL 分块 JPEG），也可在数字人设置页切换为 **EAF** 动画。资源路径为：
 
 ```
-/sdcard/system/emotion/{category}.sjpg
+/sdcard/system/emotion/{category}.sjpg   # 或 .eaf
 ```
 
 其中 `{category}` 为：`crying`、`happy`、`loving`、`neutral`、`surprised`、`thinking` 之一。

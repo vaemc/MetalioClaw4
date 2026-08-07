@@ -72,10 +72,11 @@ Ota::~Ota() {
 }
 
 std::string Ota::GetCheckVersionUrl() {
+    static constexpr const char* kDefaultOtaUrl = "https://api.tenclass.net/xiaozhi/ota/";
     Settings settings("wifi", false);
     std::string url = settings.GetString("ota_url");
     if (url.empty()) {
-        url = CONFIG_OTA_URL;
+        url = kDefaultOtaUrl;
     }
     return url;
 }

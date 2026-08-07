@@ -3613,6 +3613,146 @@
       "key": "WIFI_NOT_CONNECTED_HINT_TRANSCRIBE",
       "zh-CN": "请先连接 WiFi 后再使用转写",
       "en-US": "Connect to WiFi before transcribing"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_SETTINGS",
+      "zh-CN": "数字人设置",
+      "en-US": "Avatar Settings"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_FORMAT_SECTION",
+      "zh-CN": "表情资源格式",
+      "en-US": "Emotion asset format"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_FORMAT_HINT",
+      "zh-CN": "选择 EAF 动画或 SJPG 静态图",
+      "en-US": "Choose EAF animation or SJPG still image"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_EAF",
+      "zh-CN": "EAF 动画",
+      "en-US": "EAF animation"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_EAF_HINT",
+      "zh-CN": "加载 SD 卡 .eaf 素材",
+      "en-US": "Load .eaf assets from SD card"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_SJPG",
+      "zh-CN": "SJPG 静态图",
+      "en-US": "SJPG still image"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_SJPG_HINT",
+      "zh-CN": "加载 SD 卡 .sjpg 素材",
+      "en-US": "Load .sjpg assets from SD card"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_CURRENT_FORMAT",
+      "zh-CN": "当前格式",
+      "en-US": "Current"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_FRAME_DELAY",
+      "zh-CN": "帧间隔",
+      "en-US": "Frame delay"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_FRAME_DELAY_HINT",
+      "zh-CN": "当前帧间隔 (ms)",
+      "en-US": "Current frame delay (ms)"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_FRAME_DELAY_RANGE",
+      "zh-CN": "10 ~ 500 毫秒",
+      "en-US": "10 ~ 500 ms"
+    },
+    {
+      "key": "DIGITAL_PEOPLE_SETTINGS_SAVED",
+      "zh-CN": "数字人设置会自动保存",
+      "en-US": "Avatar settings are saved automatically"
+    },
+    {
+      "key": "SECONDARY_SCREEN",
+      "zh-CN": "副屏",
+      "en-US": "Secondary display"
+    },
+    {
+      "key": "SECONDARY_SCREEN_README_1",
+      "zh-CN": "使用前请先在 Windows 安装 USB 扩展屏驱动。",
+      "en-US": "Install the USB extended display driver on Windows first."
+    },
+    {
+      "key": "SECONDARY_SCREEN_README_2",
+      "zh-CN": "请到本项目 GitHub 仓库的 secondary_screen 文件夹下载：\nxfz1986_usb_graphic_250224_rc_sign.exe",
+      "en-US": "Download from this project's GitHub repo, secondary_screen folder:\nxfz1986_usb_graphic_250224_rc_sign.exe"
+    },
+    {
+      "key": "SECONDARY_SCREEN_README_3",
+      "zh-CN": "安装驱动后用 USB 连接电脑，点击下方开启；在 Windows「显示设置」中选择「扩展」。支持触摸。",
+      "en-US": "After installing, connect USB, tap Start below, then choose Extend in Windows Display settings. Touch is supported."
+    },
+    {
+      "key": "SECONDARY_SCREEN_README_4",
+      "zh-CN": "分辨率 720×720。开启后短按电源键可退出副屏。",
+      "en-US": "Resolution 720×720. Short-press the power key to exit while running."
+    },
+    {
+      "key": "SECONDARY_SCREEN_STATUS_STARTING",
+      "zh-CN": "正在开启副屏…",
+      "en-US": "Starting secondary display…"
+    },
+    {
+      "key": "SECONDARY_SCREEN_STATUS_RUNNING",
+      "zh-CN": "副屏运行中。短按电源键可退出；请在电脑上将显示模式设为「扩展」。",
+      "en-US": "Running. Short-press power to exit; set the PC display mode to Extend."
+    },
+    {
+      "key": "SECONDARY_SCREEN_START",
+      "zh-CN": "开启副屏",
+      "en-US": "Start secondary display"
+    },
+    {
+      "key": "SECONDARY_SCREEN_STARTING",
+      "zh-CN": "开启中…",
+      "en-US": "Starting…"
+    },
+    {
+      "key": "SECONDARY_SCREEN_STOP",
+      "zh-CN": "关闭副屏",
+      "en-US": "Stop secondary display"
+    },
+    {
+      "key": "SECONDARY_SCREEN_START_FAILED",
+      "zh-CN": "开启失败，请检查 USB 线并重试",
+      "en-US": "Start failed; check the USB cable and retry"
+    },
+    {
+      "key": "SECONDARY_SCREEN_ADV_SETTINGS",
+      "zh-CN": "副屏设置",
+      "en-US": "Secondary display settings"
+    },
+    {
+      "key": "SECONDARY_SCREEN_ADV_HINT",
+      "zh-CN": "修改后下次「开启副屏」生效",
+      "en-US": "Applies the next time you start secondary display"
+    },
+    {
+      "key": "SECONDARY_SCREEN_JPEG_QUALITY",
+      "zh-CN": "JPEG 画质",
+      "en-US": "JPEG quality"
+    },
+    {
+      "key": "SECONDARY_SCREEN_MAX_FPS",
+      "zh-CN": "最大帧率",
+      "en-US": "Max FPS"
+    },
+    {
+      "key": "SECONDARY_SCREEN_FRAME_LIMIT",
+      "zh-CN": "单帧上限",
+      "en-US": "Frame size cap"
     }
   ]
 }
