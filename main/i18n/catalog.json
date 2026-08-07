@@ -515,11 +515,6 @@
       "en-US": "Charge settings are saved automatically"
     },
     {
-      "key": "CHARGE_CHIP_ABSENT",
-      "zh-CN": "当前设备无充电芯片，无法调节电流",
-      "en-US": "No charge IC on this device; current cannot be changed"
-    },
-    {
       "key": "SETTINGS",
       "zh-CN": "设置",
       "en-US": "Settings"
@@ -833,16 +828,6 @@
       "key": "S_BCE455C9",
       "zh-CN": "雷阵雨",
       "en-US": "Thunderstorm"
-    },
-    {
-      "key": "VOL",
-      "zh-CN": "音量+",
-      "en-US": "Vol+"
-    },
-    {
-      "key": "VOL_2",
-      "zh-CN": "音量-",
-      "en-US": "Vol-"
     },
     {
       "key": "S_A48C7E2F",
@@ -1223,11 +1208,6 @@
       "key": "TEST_5",
       "zh-CN": "硬件测试",
       "en-US": "Hardware Test"
-    },
-    {
-      "key": "CHINESE_SIMPLIFIED",
-      "zh-CN": "简体中文",
-      "en-US": "简体中文"
     },
     {
       "key": "SYSTEM_INFO",
@@ -1723,11 +1703,6 @@
       "key": "AT_COMMAND_FAILED",
       "zh-CN": "AT 指令失败",
       "en-US": "AT command failed"
-    },
-    {
-      "key": "ENGLISH",
-      "zh-CN": "English",
-      "en-US": "English"
     },
     {
       "key": "I2C_NOT_DETECTED",
@@ -2355,11 +2330,6 @@
       "en-US": "Manage previously connected networks"
     },
     {
-      "key": "LANGUAGE_IS_SAVED_AUTOMATICALLY",
-      "zh-CN": "语言设置会自动保存",
-      "en-US": "Language is saved automatically"
-    },
-    {
       "key": "S_A8E64761",
       "zh-CN": "连接失败 (超时)",
       "en-US": "Connection failed (timeout)"
@@ -2930,76 +2900,6 @@
       "en-US": "SD card not detected\n\nPut chat emotion files on the SD card under\nsystem/chat/"
     },
     {
-      "key": "WEEKDAY_MONDAY",
-      "zh-CN": "星期一",
-      "en-US": "Mon"
-    },
-    {
-      "key": "WEEKDAY_TUESDAY",
-      "zh-CN": "星期二",
-      "en-US": "Tue"
-    },
-    {
-      "key": "WEEKDAY_WEDNESDAY",
-      "zh-CN": "星期三",
-      "en-US": "Wed"
-    },
-    {
-      "key": "WEEKDAY_THURSDAY",
-      "zh-CN": "星期四",
-      "en-US": "Thu"
-    },
-    {
-      "key": "WEEKDAY_FRIDAY",
-      "zh-CN": "星期五",
-      "en-US": "Fri"
-    },
-    {
-      "key": "WEEKDAY_SATURDAY",
-      "zh-CN": "星期六",
-      "en-US": "Sat"
-    },
-    {
-      "key": "WEEKDAY_SUNDAY",
-      "zh-CN": "星期日",
-      "en-US": "Sun"
-    },
-    {
-      "key": "WEEKDAY_MON_SHORT",
-      "zh-CN": "周一",
-      "en-US": "Mon"
-    },
-    {
-      "key": "WEEKDAY_TUE_SHORT",
-      "zh-CN": "周二",
-      "en-US": "Tue"
-    },
-    {
-      "key": "WEEKDAY_WED_SHORT",
-      "zh-CN": "周三",
-      "en-US": "Wed"
-    },
-    {
-      "key": "WEEKDAY_THU_SHORT",
-      "zh-CN": "周四",
-      "en-US": "Thu"
-    },
-    {
-      "key": "WEEKDAY_FRI_SHORT",
-      "zh-CN": "周五",
-      "en-US": "Fri"
-    },
-    {
-      "key": "WEEKDAY_SAT_SHORT",
-      "zh-CN": "周六",
-      "en-US": "Sat"
-    },
-    {
-      "key": "WEEKDAY_SUN_SHORT",
-      "zh-CN": "周日",
-      "en-US": "Sun"
-    },
-    {
       "key": "USB_VD_ENABLE",
       "zh-CN": "启用虚拟 U 盘",
       "en-US": "Enable virtual USB drive"
@@ -3080,11 +2980,6 @@
       "en-US": "Radio"
     },
     {
-      "key": "SATELLITE_VOICE",
-      "zh-CN": "卫星之声",
-      "en-US": "Satellite Radio"
-    },
-    {
       "key": "PLAYING_NOW",
       "zh-CN": "正在播放",
       "en-US": "Playing"
@@ -3130,11 +3025,6 @@
       "en-US": "Saving…"
     },
     {
-      "key": "RECORDING_IN_PROGRESS",
-      "zh-CN": "正在录音…",
-      "en-US": "Recording…"
-    },
-    {
       "key": "TAP_TO_START_RECORDING",
       "zh-CN": "点击下方按钮开始录音（最长 %d 分钟）",
       "en-US": "Tap below to start (max %d min)"
@@ -3158,11 +3048,6 @@
       "key": "NO_RECORDINGS",
       "zh-CN": "暂无录音",
       "en-US": "No recordings"
-    },
-    {
-      "key": "TAP_TO_PLAY",
-      "zh-CN": "点击播放",
-      "en-US": "Tap to play"
     },
     {
       "key": "NO_SD_FOR_RECORDING",
@@ -3270,19 +3155,9 @@
       "en-US": "Transcribe"
     },
     {
-      "key": "FULL_TEXT",
-      "zh-CN": "全文",
-      "en-US": "Transcript"
-    },
-    {
       "key": "AUDIO_DURATION_SEC",
       "zh-CN": "音频时长：%.1f 秒",
       "en-US": "Duration: %.1f s"
-    },
-    {
-      "key": "DIALOGUE",
-      "zh-CN": "对话",
-      "en-US": "Dialogue"
     },
     {
       "key": "SUMMARY",
@@ -3303,11 +3178,6 @@
       "key": "RECORDING_TOO_LARGE",
       "zh-CN": "录音文件过大或无效",
       "en-US": "Recording too large or invalid"
-    },
-    {
-      "key": "TRANSCRIBING",
-      "zh-CN": "正在转写…",
-      "en-US": "Transcribing…"
     },
     {
       "key": "ASR_UPLOADING",
@@ -3370,11 +3240,6 @@
       "en-US": "Image count"
     },
     {
-      "key": "AI_IMAGE_PROCESSING",
-      "zh-CN": "处理中...",
-      "en-US": "Processing..."
-    },
-    {
       "key": "AI_IMAGE_PROMPT_HINT",
       "zh-CN": "按住说话，说出想画的内容",
       "en-US": "Hold to talk and describe what to draw"
@@ -3393,11 +3258,6 @@
       "key": "AI_IMAGE_NO_TEXT",
       "zh-CN": "未识别到有效文字",
       "en-US": "No valid text recognized"
-    },
-    {
-      "key": "AI_IMAGE_GENERATING",
-      "zh-CN": "正在生成图片…",
-      "en-US": "Generating images…"
     },
     {
       "key": "AI_IMAGE_PARSE_CREATE_FAILED",
@@ -3435,11 +3295,6 @@
       "en-US": "Image generation failed: "
     },
     {
-      "key": "AI_IMAGE_GENERATING_SIMPLE",
-      "zh-CN": "生成中…",
-      "en-US": "Generating…"
-    },
-    {
       "key": "AI_IMAGE_GENERATING_ELAPSED",
       "zh-CN": "生成中… 已用时 %d 秒",
       "en-US": "Generating… %d s"
@@ -3450,29 +3305,14 @@
       "en-US": "Generating… 0 s"
     },
     {
-      "key": "AI_IMAGE_GENERATING_N",
-      "zh-CN": "生成中… (%d)",
-      "en-US": "Generating… (%d)"
-    },
-    {
       "key": "AI_IMAGE_TIMEOUT",
       "zh-CN": "生成超时，请重试",
       "en-US": "Timed out, please retry"
     },
     {
-      "key": "AI_IMAGE_DOWNLOADING",
-      "zh-CN": "下载图片中…",
-      "en-US": "Downloading images…"
-    },
-    {
       "key": "AI_IMAGE_DOWNLOADING_SIMPLE",
       "zh-CN": "下载中…",
       "en-US": "Downloading…"
-    },
-    {
-      "key": "AI_IMAGE_DOWNLOADING_N",
-      "zh-CN": "下载图片 %d/%d…",
-      "en-US": "Downloading %d/%d…"
     },
     {
       "key": "AI_IMAGE_DOWNLOAD_FAILED",
@@ -3483,11 +3323,6 @@
       "key": "AI_IMAGE_NOT_IMAGE",
       "zh-CN": "非图片响应",
       "en-US": "Response is not an image"
-    },
-    {
-      "key": "AI_IMAGE_DONE",
-      "zh-CN": "生成完成，可继续说话",
-      "en-US": "Done. Hold to talk again"
     },
     {
       "key": "AI_IMAGE_TASK_START_FAILED",
@@ -3677,42 +3512,42 @@
     {
       "key": "SECONDARY_SCREEN",
       "zh-CN": "副屏",
-      "en-US": "Secondary display"
+      "en-US": "Extend"
     },
     {
       "key": "SECONDARY_SCREEN_README_1",
       "zh-CN": "使用前请先在 Windows 安装 USB 扩展屏驱动。",
-      "en-US": "Install the USB extended display driver on Windows first."
+      "en-US": "Install the USB extend-screen driver on Windows first."
     },
     {
       "key": "SECONDARY_SCREEN_README_2",
       "zh-CN": "请到本项目 GitHub 仓库的 secondary_screen 文件夹下载：\nxfz1986_usb_graphic_250224_rc_sign.exe",
-      "en-US": "Download from this project's GitHub repo, secondary_screen folder:\nxfz1986_usb_graphic_250224_rc_sign.exe"
+      "en-US": "Download from the repo’s secondary_screen folder:\nxfz1986_usb_graphic_250224_rc_sign.exe"
     },
     {
       "key": "SECONDARY_SCREEN_README_3",
-      "zh-CN": "安装驱动后用 USB 连接电脑，点击下方开启；在 Windows「显示设置」中选择「扩展」。支持触摸。",
-      "en-US": "After installing, connect USB, tap Start below, then choose Extend in Windows Display settings. Touch is supported."
+      "zh-CN": "安装驱动后用 USB 连接电脑，点击下方开启；在 Windows「显示设置」中选择「扩展」。支持触摸，支持播放电脑声音。",
+      "en-US": "Connect USB, tap Start, set Windows display to Extend. Touch and PC audio playback supported."
     },
     {
       "key": "SECONDARY_SCREEN_README_4",
       "zh-CN": "分辨率 720×720。开启后短按电源键可退出副屏。",
-      "en-US": "Resolution 720×720. Short-press the power key to exit while running."
+      "en-US": "720×720. Short-press power to exit."
     },
     {
       "key": "SECONDARY_SCREEN_STATUS_STARTING",
       "zh-CN": "正在开启副屏…",
-      "en-US": "Starting secondary display…"
+      "en-US": "Starting…"
     },
     {
       "key": "SECONDARY_SCREEN_STATUS_RUNNING",
       "zh-CN": "副屏运行中。短按电源键可退出；请在电脑上将显示模式设为「扩展」。",
-      "en-US": "Running. Short-press power to exit; set the PC display mode to Extend."
+      "en-US": "Running. Short-press power to exit; set PC to Extend."
     },
     {
       "key": "SECONDARY_SCREEN_START",
       "zh-CN": "开启副屏",
-      "en-US": "Start secondary display"
+      "en-US": "Start"
     },
     {
       "key": "SECONDARY_SCREEN_STARTING",
@@ -3722,22 +3557,17 @@
     {
       "key": "SECONDARY_SCREEN_STOP",
       "zh-CN": "关闭副屏",
-      "en-US": "Stop secondary display"
+      "en-US": "Stop"
     },
     {
       "key": "SECONDARY_SCREEN_START_FAILED",
       "zh-CN": "开启失败，请检查 USB 线并重试",
-      "en-US": "Start failed; check the USB cable and retry"
-    },
-    {
-      "key": "SECONDARY_SCREEN_ADV_SETTINGS",
-      "zh-CN": "副屏设置",
-      "en-US": "Secondary display settings"
+      "en-US": "Failed. Check USB and retry."
     },
     {
       "key": "SECONDARY_SCREEN_ADV_HINT",
       "zh-CN": "修改后下次「开启副屏」生效",
-      "en-US": "Applies the next time you start secondary display"
+      "en-US": "Applies on next Start"
     },
     {
       "key": "SECONDARY_SCREEN_JPEG_QUALITY",
@@ -3752,7 +3582,7 @@
     {
       "key": "SECONDARY_SCREEN_FRAME_LIMIT",
       "zh-CN": "单帧上限",
-      "en-US": "Frame size cap"
+      "en-US": "Frame cap"
     }
   ]
 }

@@ -287,7 +287,7 @@ void BuildMainTab(lv_obj_t* tab) {
              true);
     add_step("3",
              "安装驱动后用 USB 连接电脑，点击下方开启；在 Windows「显示设置」中选择"
-             "「扩展」。支持触摸。",
+             "「扩展」。支持触摸，支持播放电脑声音。",
              false);
     add_step("4", "分辨率 720×720。开启后短按电源键可退出副屏。", true);
 }

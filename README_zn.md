@@ -32,7 +32,7 @@
 14. [编译与烧录](#14-编译与烧录)
 15. [调试与常见问题](#15-调试与常见问题)
 
-> 近期补充：**数字人设置（EAF/SJPG）**、**翻译**、**AI 生图**、**聊天打断/菜单**、**唤醒词会话持有**、**OTA 默认 URL 写 NVS**、**UI 多语言**、**待机屏**、**ESPClaw 双系统**、**SD 虚拟 U 盘**、**网络电台**、**录音（Opus + ASR）** 等，见对应章节。
+> 近期补充：**数字人设置（EAF/SJPG）**、**翻译**、**AI 生图**、**聊天打断/菜单**、**唤醒词会话持有**、**OTA 默认 URL 写 NVS**、**UI 多语言**、**待机屏**、**ESPClaw 双系统**、**SD 虚拟 U 盘**、**网络电台**、**录音（Opus + ASR）**、**副屏（USB 扩展显示）** 等，见对应章节。
 
 ---
 
@@ -546,6 +546,7 @@ API 基址定义于 `main/api_endpoints.h`。
 | 录音 | recording | SD 卡 Opus 录音 / 列表播放 / 云端 ASR 转写（§11.3） |
 | AI 生图 | ai_image_gen | 语音描述 → 文生图，多图 Tab 与下载（§11.6） |
 | 翻译 | translate | Sonicloud 实时同声传译（§11.5） |
+| 副屏 | secondary_screen | USB 扩展显示 720×720 + 触摸；可选电脑音频从本机扬声器播放（§11.7） |
 
 #### 设置（settings）
 
@@ -603,6 +604,16 @@ API 基址定义于 `main/api_endpoints.h`。
 - 语音描述 → 云端**文生图**；生成中显示已用时，完成后多图 Tab 浏览
 - 支持下载到本地；需 **Wi‑Fi**（未联网时拦截）
 - 底部按钮区与 Tab 交互；生成过程中相关滑动手势受限以免误触
+
+#### 11.7 副屏（secondary_screen）
+
+将本机作为电脑 **USB 扩展屏**（720×720 JPEG 刷屏 + 触摸 HID；可选 UAC 扬声器）。
+
+- **驱动**：先在 Windows 安装本仓库 [`secondary_screen/xfz1986_usb_graphic_250224_rc_sign.exe`](secondary_screen/xfz1986_usb_graphic_250224_rc_sign.exe)
+- **显示**：USB 连电脑 → 主屏「副屏」→「开启副屏」→ Windows 显示设置选 **扩展**
+- **声音**：开启后设备枚举为 USB **仅扬声器**；在 Windows「声音」输出设备中选中本机即可从喇叭播放电脑音频（无 USB 麦克风）
+- **退出**：短按电源键，或页内「关闭副屏」
+- 与 **虚拟 U 盘** 互斥；完整步骤与排障见 [`secondary_screen/README.md`](secondary_screen/README.md)
 
 ---
 
