@@ -293,6 +293,7 @@ idf_component_register(SRCS ${SOURCES}
 target_link_libraries(${COMPONENT_LIB} PRIVATE idf::esp_driver_tsens)
 
 # USB 扩展副屏：把自定义 tusb_config / UAC 头注入 tinyusb，覆盖 esp_tinyusb 默认配置。
+# uac_config.h 来自 usb_device_uac（本地 components/ 或 Component Manager）。
 idf_build_get_property(build_components BUILD_COMPONENTS)
 if(tinyusb IN_LIST build_components)
     set(_xz_tinyusb_name tinyusb)
@@ -301,10 +302,25 @@ else()
 endif()
 idf_component_get_property(_xz_tusb_lib ${_xz_tinyusb_name} COMPONENT_LIB)
 if(_xz_tusb_lib)
+    set(_xz_uac_tusb_inc "")
+    if(usb_device_uac IN_LIST build_components)
+        idf_component_get_property(_xz_uac_dir usb_device_uac COMPONENT_DIR)
+        set(_xz_uac_tusb_inc "${_xz_uac_dir}/tusb_uac")
+    elseif(espressif__usb_device_uac IN_LIST build_components)
+        idf_component_get_property(_xz_uac_dir espressif__usb_device_uac COMPONENT_DIR)
+        set(_xz_uac_tusb_inc "${_xz_uac_dir}/tusb_uac")
+    elseif(EXISTS "${PROJECT_DIR}/components/usb_device_uac/tusb_uac")
+        set(_xz_uac_tusb_inc "${PROJECT_DIR}/components/usb_device_uac/tusb_uac")
+    endif()
+    if(NOT _xz_uac_tusb_inc)
+        message(FATAL_ERROR
+            "usb_device_uac not found (need components/usb_device_uac or "
+            "espressif/usb_device_uac). Required for tusb_config.h → uac_config.h")
+    endif()
     target_include_directories(${_xz_tusb_lib} BEFORE PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/usb_extend_screen/tusb"
         "${CMAKE_CURRENT_SOURCE_DIR}/usb_extend_screen/include"
-        "${PROJECT_DIR}/components/usb_device_uac/tusb_uac")
+        "${_xz_uac_tusb_inc}")
 endif()
 
 # Use target_compile_definitions to define BOARD_TYPE, BOARD_NAME
