@@ -68,8 +68,12 @@ static std::string uartBuffer;
 // 对共享 GPIO 3 复位线发出脉冲后重放厂商 DCS 初始化序列。
 // 在 InitializeLCD() 中赋值。
 static esp_lcd_panel_io_handle_t s_metalio_claw_4_panel_io = NULL;
+static esp_lcd_panel_handle_t s_metalio_claw_4_panel = NULL;
+static esp_lcd_touch_handle_t s_metalio_claw_4_touch = NULL;
 
 extern "C" esp_lcd_panel_io_handle_t metalio_claw_4_get_panel_io() { return s_metalio_claw_4_panel_io; }
+extern "C" esp_lcd_panel_handle_t metalio_claw_4_get_panel() { return s_metalio_claw_4_panel; }
+extern "C" esp_lcd_touch_handle_t metalio_claw_4_get_touch() { return s_metalio_claw_4_touch; }
 
 // 板载 I2C 主总线（端口 1，GPIO 7/8）的全局句柄。
 // 摄像头 SCCB 必须复用此句柄，而不是在同一物理引脚上再分配控制器，
@@ -402,6 +406,8 @@ private:
     }
 
     void InitializeDisplay() {
+        s_metalio_claw_4_panel = panel_handle;
+        s_metalio_claw_4_touch = touch_handle;
         display_ = new LVAdapterDisplay(panel_handle, panel_io_handle, touch_handle, DISPLAY_WIDTH,
                                         DISPLAY_HEIGHT);
     }
@@ -469,8 +475,10 @@ private:
             ESP_LOGE(TAG, "GT911 init failed: 0x%x", err);
             esp_lcd_panel_io_del(tp_io_handle);
             touch_handle = NULL;
+            s_metalio_claw_4_touch = NULL;
             return;
         }
+        s_metalio_claw_4_touch = touch_handle;
     }
     static void I2cWxchoTask(void* arg) {
         METALIO_CLAW_4* board = static_cast<METALIO_CLAW_4*>(arg);

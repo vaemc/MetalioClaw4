@@ -130,7 +130,7 @@ dependencies:
       require: private
       version: '>=4.1'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 0.5.3
   espressif/dl_fft:
@@ -635,7 +635,7 @@ dependencies:
       type: service
     version: 1.1.0~1
   espressif/esp_lcd_touch_gt911:
-    component_hash: 6029febef66eefd0910d527d7f30292779ccbf22a8dedd2bd69466acf0068a7b
+    component_hash: 07f678e4202d79bbad917805dcec4134ff08344177720f32ec4898267ad9e394
     dependencies:
     - name: espressif/esp_lcd_touch
       registry_url: https://components.espressif.com
@@ -647,7 +647,7 @@ dependencies:
     source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.2.0~2
+    version: 1.2.0~3
   espressif/esp_lcd_touch_st7123:
     component_hash: c43fd76fb12b4dd1bf30d60e99e4ec150b16e17cafc942a58e6274d4b68e71fe
     dependencies:
@@ -1074,7 +1074,7 @@ dependencies:
       require: private
       version: '>=5.0'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     targets:
     - esp32s2
@@ -1247,6 +1247,7 @@ direct_dependencies:
 - espressif/adc_battery_estimation
 - espressif/adc_mic
 - espressif/button
+- espressif/cmake_utilities
 - espressif/esp-sr
 - espressif/esp32_p4_function_ev_board
 - espressif/esp_audio_simple_player
@@ -1285,6 +1286,7 @@ direct_dependencies:
 - espressif/iot_eth
 - espressif/knob
 - espressif/led_strip
+- espressif/tinyusb
 - espressif2022/image_player
 - idf
 - llgok/cpp_bus_driver
@@ -1294,6 +1296,6 @@ direct_dependencies:
 - waveshare/esp_lcd_sh8601
 - waveshare/esp_lcd_st7703
 - waveshare/esp_lcd_touch_cst9217
-manifest_hash: e490f36617d35a78564a2b3d2b4d34553098cf7318423ea77d322492893925eb
+manifest_hash: 8560d36eb31b553229a0f9673a5002a6faf406fbe26cc9f1c6b6e1f60471f465
 target: esp32p4
 version: 2.0.0

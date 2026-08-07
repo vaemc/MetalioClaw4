@@ -1,5 +1,8 @@
 tmp/
-components/
+# 忽略 components 下内容（用 /* 而非 /，否则 ! 例外无法生效）
+components/*
+!components/usb_device_uac/
+!components/usb_device_uac/**
 managed_components/
 build/
 .vscode/

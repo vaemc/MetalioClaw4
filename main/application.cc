@@ -472,15 +472,19 @@ void Application::Start() {
     };
     audio_service_.SetCallbacks(callbacks);
 
-    // ESP_LOGI(TAG, "---测试OTA地址---");
-    // std::string test_ota_url = "http://192.168.8.140:8080/xiaozhi/ota/";
-    // Settings settings("wifi", true);
-    // settings.SetString("ota_url", test_ota_url);
-    // ESP_LOGI(TAG, "OTA URL:%s ", test_ota_url.c_str());
-
-    // auto &ssid_manager = SsidManager::GetInstance();
-    // ssid_manager.AddSsid("CloudZao-RJ", "asdfghjkl");
-    // ESP_LOGI(TAG, "---测试OTA地址---");
+    // OTA URL：NVS(wifi/ota_url) 为空则写入默认地址，非空则沿用 NVS
+    {
+        static constexpr const char* kDefaultOtaUrl = "https://api.tenclass.net/xiaozhi/ota/";
+        Settings settings("wifi", true);
+        std::string ota_url = settings.GetString("ota_url");
+        if (ota_url.empty()) {
+            ota_url = kDefaultOtaUrl;
+            settings.SetString("ota_url", ota_url);
+            ESP_LOGI(TAG, "OTA URL empty in NVS, wrote default: %s", ota_url.c_str());
+        } else {
+            ESP_LOGI(TAG, "OTA URL from NVS: %s", ota_url.c_str());
+        }
+    }
 
     // Start the main event loop task with priority 3
     xTaskCreate([](void* arg) {
