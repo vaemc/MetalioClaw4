@@ -729,10 +729,25 @@ enum class Str : uint16_t {
     SECONDARY_SCREEN_ADV_HINT = 710,
     SECONDARY_SCREEN_JPEG_QUALITY = 711,
     SECONDARY_SCREEN_MAX_FPS = 712,
-    SECONDARY_SCREEN_FRAME_LIMIT = 713
+    SECONDARY_SCREEN_FRAME_LIMIT = 713,
+    C5_FW_TAB = 714,
+    C5_FW_HINT = 715,
+    C5_FW_CURRENT_FMT = 716,
+    C5_FW_CURRENT_PREFIX = 717,
+    C5_FW_TARGET = 718,
+    C5_FW_UP_TO_DATE = 719,
+    C5_FW_CAN_UPDATE = 720,
+    C5_FW_DOWNLOADING = 721,
+    C5_FW_ACTIVATING = 722,
+    C5_FW_SUCCESS_REBOOT = 723,
+    C5_FW_FAILED = 724,
+    C5_FW_VERSION_UNAVAILABLE = 725,
+    C5_FW_NEED_NETWORK = 726,
+    C5_FW_REBOOT_HINT = 727,
+    C5_FW_READING_VERSION = 728
 };
 
-constexpr size_t kStringCount = 714;
+constexpr size_t kStringCount = 729;
 
 struct LocaleInfo {
     Locale id;
@@ -1462,6 +1477,21 @@ inline constexpr const char* kMsgIds[kStringCount] = {
     "JPEG 画质",
     "最大帧率",
     "单帧上限",
+    "升级",
+    "C5固件",
+    "当前版本：%u.%u.%u",
+    "当前版本：",
+    "目标版本：",
+    "已是最新版本",
+    "可更新",
+    "正在下载并写入…",
+    "正在激活新固件…",
+    "更新成功，即将重启",
+    "更新失败",
+    "无法获取版本",
+    "请先连接网络",
+    "更新完成后设备会自动重启",
+    "正在读取版本…",
 };
 
 inline constexpr const char* kStringsZhCN[kStringCount] = {
@@ -2179,6 +2209,21 @@ inline constexpr const char* kStringsZhCN[kStringCount] = {
     "JPEG 画质",
     "最大帧率",
     "单帧上限",
+    "升级",
+    "C5固件",
+    "当前版本：%u.%u.%u",
+    "当前版本：",
+    "目标版本：",
+    "已是最新版本",
+    "可更新",
+    "正在下载并写入…",
+    "正在激活新固件…",
+    "更新成功，即将重启",
+    "更新失败",
+    "无法获取版本",
+    "请先连接网络",
+    "更新完成后设备会自动重启",
+    "正在读取版本…",
 };
 
 inline constexpr const char* kStringsEnUS[kStringCount] = {
@@ -2896,6 +2941,21 @@ inline constexpr const char* kStringsEnUS[kStringCount] = {
     "JPEG quality",
     "Max FPS",
     "Frame cap",
+    "Upgrade",
+    "C5 Firmware",
+    "Current: %u.%u.%u",
+    "Current: ",
+    "Target: ",
+    "Already up to date",
+    "Update available",
+    "Downloading and writing…",
+    "Activating new firmware…",
+    "Updated. Rebooting soon",
+    "Update failed",
+    "Cannot read version",
+    "Connect to network first",
+    "Device reboots after update",
+    "Reading version…",
 };
 
 inline constexpr const char* const* kLocaleTables[kLocaleCount] = {

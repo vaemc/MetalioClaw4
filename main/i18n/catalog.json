@@ -3583,6 +3583,81 @@
       "key": "SECONDARY_SCREEN_FRAME_LIMIT",
       "zh-CN": "单帧上限",
       "en-US": "Frame cap"
+    },
+    {
+      "key": "C5_FW_TAB",
+      "zh-CN": "升级",
+      "en-US": "Upgrade"
+    },
+    {
+      "key": "C5_FW_HINT",
+      "zh-CN": "C5固件",
+      "en-US": "C5 Firmware"
+    },
+    {
+      "key": "C5_FW_CURRENT_FMT",
+      "zh-CN": "当前版本：%u.%u.%u",
+      "en-US": "Current: %u.%u.%u"
+    },
+    {
+      "key": "C5_FW_CURRENT_PREFIX",
+      "zh-CN": "当前版本：",
+      "en-US": "Current: "
+    },
+    {
+      "key": "C5_FW_TARGET",
+      "zh-CN": "目标版本：",
+      "en-US": "Target: "
+    },
+    {
+      "key": "C5_FW_UP_TO_DATE",
+      "zh-CN": "已是最新版本",
+      "en-US": "Already up to date"
+    },
+    {
+      "key": "C5_FW_CAN_UPDATE",
+      "zh-CN": "可更新",
+      "en-US": "Update available"
+    },
+    {
+      "key": "C5_FW_DOWNLOADING",
+      "zh-CN": "正在下载并写入…",
+      "en-US": "Downloading and writing…"
+    },
+    {
+      "key": "C5_FW_ACTIVATING",
+      "zh-CN": "正在激活新固件…",
+      "en-US": "Activating new firmware…"
+    },
+    {
+      "key": "C5_FW_SUCCESS_REBOOT",
+      "zh-CN": "更新成功，即将重启",
+      "en-US": "Updated. Rebooting soon"
+    },
+    {
+      "key": "C5_FW_FAILED",
+      "zh-CN": "更新失败",
+      "en-US": "Update failed"
+    },
+    {
+      "key": "C5_FW_VERSION_UNAVAILABLE",
+      "zh-CN": "无法获取版本",
+      "en-US": "Cannot read version"
+    },
+    {
+      "key": "C5_FW_NEED_NETWORK",
+      "zh-CN": "请先连接网络",
+      "en-US": "Connect to network first"
+    },
+    {
+      "key": "C5_FW_REBOOT_HINT",
+      "zh-CN": "更新完成后设备会自动重启",
+      "en-US": "Device reboots after update"
+    },
+    {
+      "key": "C5_FW_READING_VERSION",
+      "zh-CN": "正在读取版本…",
+      "en-US": "Reading version…"
     }
   ]
 }
