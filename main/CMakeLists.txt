@@ -300,6 +300,9 @@ idf_component_register(SRCS ${SOURCES}
 
 target_link_libraries(${COMPONENT_LIB} PRIVATE idf::esp_driver_tsens)
 
+# panic 写 Flash coredump 分区（需 partitions 含 subtype=coredump）
+target_link_libraries(${COMPONENT_LIB} PRIVATE idf::espcoredump)
+
 # USB 扩展副屏：把自定义 tusb_config / UAC 头注入 tinyusb，覆盖 esp_tinyusb 默认配置。
 # uac_config.h 来自 usb_device_uac（本地 components/ 或 Component Manager）。
 idf_build_get_property(build_components BUILD_COMPONENTS)

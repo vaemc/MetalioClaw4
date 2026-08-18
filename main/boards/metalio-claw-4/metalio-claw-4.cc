@@ -455,11 +455,11 @@ private:
             .x_max = DISPLAY_WIDTH,
             .y_max = DISPLAY_HEIGHT,
             .rst_gpio_num = GPIO_NUM_NC,
-            .int_gpio_num = GPIO_NUM_NC,
+            .int_gpio_num = TOUCH_INT_PIN,
             .levels =
                 {
                     .reset = 0,
-                    .interrupt = 0,
+                    .interrupt = 0,  // GT911 INT 低有效 → 下降沿
                 },
             .flags =
                 {
