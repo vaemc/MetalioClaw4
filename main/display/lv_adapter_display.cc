@@ -129,7 +129,8 @@ LVAdapterDisplay::LVAdapterDisplay(const esp_lcd_panel_handle_t panel,
     esp_lv_adapter_touch_config_t touch_cfg =
         ESP_LV_ADAPTER_TOUCH_DEFAULT_CONFIG(disp, touch_handle);
     lv_indev_t* touch_indev = esp_lv_adapter_register_touch(&touch_cfg);
-    // 40ms：与电源键/电量计共享 I2C，20ms 轮询易在总线抖动时拖垮 GT911/TCA/BQ
+    // 40ms：有 INT 时仅作「按下跟手」轮询间隔；无 INT 则整段周期轮询。
+    // 与电源键/电量计共享 I2C，过短间隔易在总线抖动时拖垮 GT911/TCA/BQ。
     touch_feed_init(touch_handle, 40);
     touch_feed_attach_indev(touch_indev);
 

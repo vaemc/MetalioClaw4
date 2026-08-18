@@ -45,6 +45,14 @@ set(SOURCES "audio/audio_codec.cc"
             "display/screen/vibrate_screen/vibrate_screen.cc"
             "display/screen/backlight_screen/backlight_screen.cc"
             "display/screen/settings_screen/settings_screen.cc"
+            "display/screen/settings_screen/settings_common.cc"
+            "display/screen/settings_screen/settings_brightness_tab.cc"
+            "display/screen/settings_screen/settings_standby_tab.cc"
+            "display/screen/settings_screen/settings_volume_tab.cc"
+            "display/screen/settings_screen/settings_language_tab.cc"
+            "display/screen/settings_screen/settings_charge_tab.cc"
+            "display/screen/settings_screen/settings_upgrade_tab.cc"
+            "display/screen/settings_screen/settings_bluetooth_tab.cc"
             "display/screen/call_screen/call_screen.cc"
             "display/screen/bluetooth_screen/bluetooth_screen.cc"
             "display/screen/chat_screen/chat_screen.cc"
@@ -291,6 +299,9 @@ idf_component_register(SRCS ${SOURCES}
                     )
 
 target_link_libraries(${COMPONENT_LIB} PRIVATE idf::esp_driver_tsens)
+
+# panic 写 Flash coredump 分区（需 partitions 含 subtype=coredump）
+target_link_libraries(${COMPONENT_LIB} PRIVATE idf::espcoredump)
 
 # USB 扩展副屏：把自定义 tusb_config / UAC 头注入 tinyusb，覆盖 esp_tinyusb 默认配置。
 # uac_config.h 来自 usb_device_uac（本地 components/ 或 Component Manager）。

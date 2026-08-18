@@ -52,6 +52,9 @@
 #define DISPLAY_BACKLIGHT_PIN GPIO_NUM_52
 #define DISPLAY_BACKLIGHT_OUTPUT_INVERT false
 
+// GT911 INT（低有效）；接 GPIO33 后由 touch_feed 注册 ISR 唤醒读点
+#define TOUCH_INT_PIN GPIO_NUM_33
+
 // SDMMC (SD card) pins for ESP32-P4. Uses SDMMC slot 0 with 4-bit bus.
 // Verify these GPIO assignments against the actual metalio-claw-4 schematic.
 #define SDMMC_CLK_PIN  GPIO_NUM_43
