@@ -1049,7 +1049,13 @@ void Application::SendMcpMessage(const std::string& payload) {
 }
 
 void Application::SetAecMode(AecMode mode) {
-    if (mode != kAecOff && mode != kAecOnDeviceSide) {
+    if (!kInterruptUserControlEnabled) {
+        // 产品关闭用户侧打断：拒绝打开，仍落盘 Off，保证与 UI / 开机恢复一致
+        if (mode != kAecOff) {
+            ESP_LOGW(TAG, "interrupt user control disabled; forcing Off");
+        }
+        mode = kAecOff;
+    } else if (mode != kAecOff && mode != kAecOnDeviceSide) {
         ESP_LOGW(TAG, "unsupported AecMode %d, fallback Off", static_cast<int>(mode));
         mode = kAecOff;
     }
@@ -1081,9 +1087,19 @@ void Application::SetAecMode(AecMode mode) {
 }
 
 void Application::ApplyInterruptPreferenceFromNvs() {
-    Settings settings("audio");
-    // 无记录时默认关打断，避免上电即全双工
-    const bool interrupt_on = settings.GetBool("interrupt", false);
+    bool interrupt_on = false;
+    if constexpr (kInterruptUserControlEnabled) {
+        Settings settings("audio");
+        // 无记录时默认关打断，避免上电即全双工
+        interrupt_on = settings.GetBool("interrupt", false);
+    } else {
+        // UI 已隐藏：强制 Off；若 NVS 仍残留「开」则回写清除，避免半状态
+        Settings settings("audio", true);
+        if (settings.GetBool("interrupt", false)) {
+            settings.SetBool("interrupt", false);
+            ESP_LOGI(TAG, "interrupt preference cleared (user control disabled)");
+        }
+    }
     aec_mode_ = interrupt_on ? kAecOnDeviceSide : kAecOff;
     audio_service_.EnableDeviceAec(interrupt_on);
     ESP_LOGI(TAG, "interrupt preference: %s (device AEC)", interrupt_on ? "on" : "off");

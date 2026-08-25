@@ -106,6 +106,7 @@ struct UiState {
     lv_obj_t* menu_panel       = nullptr;
     lv_obj_t* menu_item_emotion = nullptr;
     lv_obj_t* menu_item_chat    = nullptr;
+    // 仅当 kInterruptUserControlEnabled 时创建；否则保持 nullptr，不占 LVGL 节点。
     lv_obj_t* menu_item_interrupt = nullptr;
     lv_obj_t* menu_item_interrupt_lbl = nullptr;
     lv_obj_t* menu_item_clear   = nullptr;
@@ -723,7 +724,7 @@ bool is_header_menu_open() {
            !lv_obj_has_flag(s_ui.menu_panel, LV_OBJ_FLAG_HIDDEN);
 }
 
-bool is_interrupt_enabled() {
+[[maybe_unused]] bool is_interrupt_enabled() {
     return Application::GetInstance().GetAecMode() != kAecOff;
 }
 
@@ -734,11 +735,16 @@ void refresh_header_menu_selection() {
     // 清空只对文字气泡列表有意义，表情模式隐藏。
     set_obj_hidden(s_ui.menu_item_clear, !chat);
 
-    const bool interrupt_on = is_interrupt_enabled();
-    style_menu_item(s_ui.menu_item_interrupt, interrupt_on);
-    if (s_ui.menu_item_interrupt_lbl != nullptr) {
-        lv_label_set_text(s_ui.menu_item_interrupt_lbl,
-                          interrupt_on ? I18n::T("打断：开") : I18n::T("打断：关"));
+    if constexpr (kInterruptUserControlEnabled) {
+        // 未创建打断项时指针为 nullptr；style / label 均有空指针保护。
+        if (s_ui.menu_item_interrupt != nullptr) {
+            const bool interrupt_on = is_interrupt_enabled();
+            style_menu_item(s_ui.menu_item_interrupt, interrupt_on);
+            if (s_ui.menu_item_interrupt_lbl != nullptr) {
+                lv_label_set_text(s_ui.menu_item_interrupt_lbl,
+                                  interrupt_on ? I18n::T("打断：开") : I18n::T("打断：关"));
+            }
+        }
     }
 }
 
@@ -818,6 +824,11 @@ void on_clear_clicked() {
 }
 
 void on_interrupt_clicked() {
+    if (!kInterruptUserControlEnabled) {
+        // 防御：菜单项不应存在；若误触也落到 Application 强制 Off。
+        ESP_LOGW(TAG, "interrupt toggle ignored (user control disabled)");
+        return;
+    }
     if (reject_if_blocked()) {
         return;
     }
@@ -847,6 +858,7 @@ void on_menu_item_clicked(lv_event_t* e) {
         on_clear_clicked();
         break;
     case MenuAction::Interrupt:
+        // 产品关闭时菜单项不会创建；保留分支便于开关重新打开后行为完整。
         on_interrupt_clicked();
         break;
     }
@@ -929,9 +941,15 @@ void build_header_menu(lv_obj_t* parent) {
         create_menu_item(s_ui.menu_panel, I18n::T("表情"), MenuAction::Emotion);
     s_ui.menu_item_chat =
         create_menu_item(s_ui.menu_panel, I18n::T("聊天"), MenuAction::Chat);
-    s_ui.menu_item_interrupt =
-        create_menu_item(s_ui.menu_panel, I18n::T("打断：关"), MenuAction::Interrupt,
-                         &s_ui.menu_item_interrupt_lbl);
+    // 不创建（而非 HIDDEN）：省 LVGL 对象；屏销毁时也无孤儿节点。
+    if constexpr (kInterruptUserControlEnabled) {
+        s_ui.menu_item_interrupt =
+            create_menu_item(s_ui.menu_panel, I18n::T("打断：关"), MenuAction::Interrupt,
+                             &s_ui.menu_item_interrupt_lbl);
+    } else {
+        s_ui.menu_item_interrupt = nullptr;
+        s_ui.menu_item_interrupt_lbl = nullptr;
+    }
     s_ui.menu_item_clear =
         create_menu_item(s_ui.menu_panel, I18n::T("清空"), MenuAction::Clear);
     refresh_header_menu_selection();

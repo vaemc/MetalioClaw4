@@ -31,6 +31,12 @@ enum AecMode {
     kAecOnDeviceSide,
 };
 
+// 产品策略：打断（设备端 AEC / Realtime 聆听）是否对用户开放。
+// false：聊天页不展示开关；运行时强制保持 Off，并清除 NVS 中旧的「开」残留，
+//        避免「UI 已隐藏但 NVS 仍恢复打断」的半状态。
+// 恢复能力时改为 true，并确保聊天菜单重新挂上打断项。
+inline constexpr bool kInterruptUserControlEnabled = false;
+
 class Application {
 public:
     static Application& GetInstance() {

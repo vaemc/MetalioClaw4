@@ -15,7 +15,8 @@
 // 立刻 destroy 唤醒词 AFE（esp-sr 内部任务否则常驻高 CPU）。
 //
 // 消息 / 表情由 LVAdapterDisplay 注入；未激活时全屏拦截弹窗。
-// Header：返回 + 标题/状态 + 右侧菜单（表情/聊天/打断/清空）。
+// Header：返回 + 标题/状态 + 右侧菜单（表情/聊天/清空）。
+// 打断开关由 kInterruptUserControlEnabled 门控；当前产品关闭，默认 Off。
 // ---------------------------------------------------------------------------
 
 enum class ChatMsgDir : uint8_t {
