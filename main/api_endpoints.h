@@ -91,10 +91,11 @@ constexpr const char* kAsrAudioRecords =
 // 设备侧原始 WAV 转写（octet-stream body）
 constexpr const char* kXiaozhiAsrWav = "/xiaozhi/api/asr?format=wav";
 
-// DashScope 文生图
-constexpr const char* kText2Image = "/xiaozhi/api/dashscope/text2image";
+// 百度文生图（atomic picture）
+constexpr const char* kText2Image =
+    "/xiaozhi/api/baidu/atomic/picture/generate";
 constexpr const char* kText2ImageTaskFmt =
-    "/xiaozhi/api/dashscope/text2image/tasks/%s?maxSide=450";
+    "/xiaozhi/api/baidu/atomic/picture/generate/tasks/%s";
 
 // Sonicloud 实时同声传译：换 Token，返回 data.wsUrl
 constexpr const char* kSinicloudToken = "/xiaozhi/api/sinicloud/token";

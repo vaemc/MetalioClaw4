@@ -401,7 +401,7 @@ std::unique_ptr<Http> create_http_client(std::string& err_out) {
     http->SetTimeout(kHttpTimeoutMs);
     http->SetHeader("Accept", "*/*");
     http->SetHeader("Connection", "close");
-    http->SetHeader("X-Device-Id", device_id_header());
+    http->SetHeader("Device-Id", device_id_header().c_str());
     return http;
 }
 
@@ -786,7 +786,7 @@ void apply_images_ui(uint32_t session,
 }
 
 // ---------------------------------------------------------------------------
-// Worker: record → ASR → text2image → poll → download
+// Worker: record → ASR → baidu picture generate → poll → download
 // ---------------------------------------------------------------------------
 void worker_task(void* /*arg*/) {
     const uint32_t session = s_session.load(std::memory_order_acquire);
@@ -906,7 +906,7 @@ void worker_task(void* /*arg*/) {
     }
     cJSON_AddStringToObject(req, "prompt", prompt.c_str());
     cJSON_AddStringToObject(req, "negativePrompt", "");
-    cJSON_AddStringToObject(req, "size", "1280*1280");
+    cJSON_AddStringToObject(req, "size", "480*480");
     cJSON_AddNumberToObject(req, "n", n);
     cJSON_AddBoolToObject(req, "promptExtend", true);
     cJSON_AddBoolToObject(req, "watermark", false);
@@ -942,8 +942,8 @@ void worker_task(void* /*arg*/) {
     }
     create.body.clear();
     create.body.shrink_to_fit();
-    ESP_LOGI(TAG, "text2image taskId=%s n=%d prompt=%s", task_id.c_str(), n,
-             prompt.c_str());
+    ESP_LOGI(TAG, "picture generate taskId=%s n=%d prompt=%s",
+             task_id.c_str(), n, prompt.c_str());
 
     std::vector<std::string> image_urls;
     int http_fails = 0;
