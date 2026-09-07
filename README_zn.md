@@ -1,7 +1,7 @@
 # Metalio Claw4
 
 <p align="center">
-  <img src="images/product.jpg" alt="Metalio Claw4" width="720"/>
+  <img src="images/product.png" alt="Metalio Claw4" width="720"/>
 </p>
 
 **中文** | [English](README.md)
